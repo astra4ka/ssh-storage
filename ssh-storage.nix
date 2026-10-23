@@ -1204,7 +1204,10 @@ let
             for n, k in enumerate(known, 1): print(f"  {n}. {k}")
             nick = ask("Ник участника (или номер)", validate=lambda v: bool(re.fullmatch(NICK_RE, v)) or v.isdigit() and 1 <= int(v) <= len(known))
             if nick.isdigit() and 1 <= int(nick) <= len(known): nick = known[int(nick) - 1]
-            print(yellow(f"\nКлючи участника {nick} будут сняты на всех серверах ({len(sv)}). Полное удаление — с компьютера."))
+            sv = pick_many(sv, "Где отозвать")
+            if not sv: return
+            print(yellow(f"\nУчастник {nick}: ключи снять, вход заблокировать, сеансы закрыть на: {', '.join(x['name'] for x in sv)}. "
+                         "Полное удаление — с компьютера."))
             if not yes(red("Отозвать?")): return
             res = []
             for x in sv:
@@ -1424,6 +1427,17 @@ let
         def close(self):
             self.srv.close(); shutil.rmtree(self.dir, ignore_errors=True)
 
+    def pick_many(sv, what):
+        """Номера серверов; Enter — все. Пустой список — отмена."""
+        for n, x in enumerate(sv, 1): print(f"  {n}. {server_line(x)}")
+        while True:
+            a = input(blue(f"\n{what}: номера через запятую или пробел (Enter — все, 0 — отмена): ")).strip()
+            if not a: return list(sv)
+            nums = {int(n) if n.isdigit() else -1 for n in re.split(r"[\s,]+", a)}
+            if 0 in nums: return []
+            if all(1 <= n <= len(sv) for n in nums): return [sv[n - 1] for n in sorted(nums)]
+            print(yellow(f"Только номера от 1 до {len(sv)}."))
+
     def ssh_cmd(s, *opts):
         return [SSH, "-p", str(s["port"]), "-o", "ForwardAgent=no", *opts, "--", f"{s['user']}@{s['host']}"]
 
@@ -1436,51 +1450,80 @@ let
     ROLES = {"admin": "администратор — sudo и журналы", "operator": "оператор — журналы, без sudo",
              "viewer": "наблюдатель — журналы, без sudo"}
 
+    # Общие куски shell для участников (под root, нужны L, N, T, U). Без set -e: busybox (Alpine) не знает usermod/gpasswd/
+    # passwd -e, поэтому у шагов запасной вариант, а важные шаги проверяются явно.
+    # Реестр /var/lib/ssh-storage/members/<логин> = ник (только root): чей это пользователь, даже если участник стёр метку ключа;
+    # <логин>.locked — заблокирован нашим отзывом (снимаем только свою блокировку).
+    MEMBER_SH = (
+        'R=/var/lib/ssh-storage/members; mkdir -p "$R" && chmod 700 /var/lib/ssh-storage "$R" || exit 1; '
+        'grp() { getent group "$1" >/dev/null || groupadd "$1" 2>/dev/null || addgroup "$1" >/dev/null 2>&1; }; '
+        'join() { usermod -aG "$1" "$L" 2>/dev/null || addgroup "$L" "$1" >/dev/null 2>&1; }; '
+        'leave() { gpasswd -d "$L" "$1" >/dev/null 2>&1 || delgroup "$L" "$1" >/dev/null 2>&1; true; }; '
+        'pw() { awk -F: -v u="$L" \'$1==u{print $2}\' /etc/shadow; }; '
+        'home() { h=$(getent passwd "$L" | cut -d: -f6); f="$h/.ssh/authorized_keys"; }; '
+        'ours() { [ "$L" != root ] && [ "$L" != "$U" ] && id -nG "$L" | grep -Eq "(^| )ssh-storage-(admin|operator|viewer)( |$)"; }; '
+        'mine() { [ "$(cat "$R/$L" 2>/dev/null)" = "$N" ] || { [ ! -f "$R/$L" ] && grep -q "$T" "$f" 2>/dev/null; }; }; ')
+    LOCK_SH = ('pkill -KILL -u "$L" 2>/dev/null; usermod -L -e 1 "$L" 2>/dev/null || passwd -l "$L" >/dev/null 2>&1; '
+               'leave sudo; leave wheel; echo "$N" > "$R/$L"; : > "$R/$L.locked"; pkill -KILL -u "$L" 2>/dev/null; ')
+    UNLOCK_SH = ('usermod -U -e "" "$L" 2>/dev/null || usermod -e "" "$L" 2>/dev/null '
+                 '|| case "$(pw)" in "!"?*) passwd -u "$L" >/dev/null 2>&1;; esac; ')  # одиночный "!" не трогаем: busybox сделал бы пустой пароль
+    STRIP_SH = ('cp "$f" "$f.ssh-storage.bak" && { grep -v "$T" "$f.ssh-storage.bak"; true; } > "$f.new" '
+                '&& cat "$f.new" > "$f" && rm -f "$f.new" || exit 1; ')
+
+    def as_root(script):
+        """Выполнить под root (или через sudo); U — кто вызывает, его никогда не трогаем."""
+        return f'U=$(id -un); S=""; [ "$(id -u)" = 0 ] || S=sudo; $S env U="$U" sh -c {shlex.quote(script)}'
+
+    def member_vars(nick, login=None):
+        assert re.fullmatch(NICK_RE, nick) and (login is None or re.fullmatch(LOGIN_RE, login))
+        return (f'L={login}; ' if login else ''') + f'N={nick}; T=" ssh-storage-member:{nick}:"; ' + MEMBER_SH
+
     def member_cmd(login, key, nick, role="viewer"):
-        """Создать пользователя и прописать ключ с меткой ssh-storage-member:<ник>. Существующего — только если это
-        уже участник с тем же ником (новый ключ дописывается: восстановление через админа); иначе не трогать."""
-        assert re.fullmatch(LOGIN_RE, login) and re.fullmatch(PUBKEY_RE, key) and re.fullmatch(NICK_RE, nick) and role in ROLES
-        g = f"ssh-storage-{role}"
-        line = f"{key} ssh-storage-member:{nick}:{time.strftime('%Y%m%d')}"  # символы проверены выше — кавычки не нужны
-        return (f'S=""; [ "$(id -u)" = 0 ] || S=sudo; '
-                f'if id {login} >/dev/null 2>&1; then $S sh -c \'f="$(getent passwd {login} | cut -d: -f6)/.ssh/authorized_keys"; '
-                f'grep -q " ssh-storage-member:{nick}:" "$f" 2>/dev/null || exit 4; grep -qF "{key.split()[1]}" "$f" || printf "%s\\n" "{line}" >> "$f"\' '
-                f'&& {{ echo "✓ {login} уже участник {nick}: ключ на месте"; exit 0; }} '
-                f'|| {{ echo "✗ пользователь {login} уже существует и не участник {nick} — не трогаю"; exit 4; }}; fi; '
-                f'$S sh -c \'set -e; useradd -m -s /bin/sh {login} 2>/dev/null || adduser -D -s /bin/sh {login}; '
-                f'h=$(getent passwd {login} | cut -d: -f6); mkdir -p "$h/.ssh"; '
-                f'printf "%s\\n" "{line}" > "$h/.ssh/authorized_keys"; '
-                f'chmod 700 "$h/.ssh"; chmod 600 "$h/.ssh/authorized_keys"; chown -R {login}: "$h/.ssh"; '
-                f'getent group {g} >/dev/null || groupadd {g} 2>/dev/null || addgroup {g}; usermod -aG {g} {login} 2>/dev/null || addgroup {login} {g}; '
-                f'for x in adm systemd-journal; do getent group $x >/dev/null && usermod -aG $x {login}; done; '
-                + (f'x=$(getent group sudo >/dev/null && echo sudo || echo wheel); usermod -aG $x {login}; '
-                   f'echo "Временный пароль sudo для {login} (участник сменит его при первом входе):"; passwd {login}; passwd -e {login} >/dev/null; '
-                   if role == "admin" else "") +
-                f'true\' && echo "✓ создан {login}, ключ прописан, группа {g}' + (", sudo" if role == "admin" else ", без sudo") + ', журналы"')
+        """Создать участника или обновить своего (тот же ник в реестре): ключ с меткой ssh-storage-member:<ник>, роль
+        (группы, sudo только у admin), снять нашу блокировку после отзыва. Чужого пользователя не трогает (exit 4)."""
+        assert re.fullmatch(PUBKEY_RE, key) and role in ROLES
+        line = f"{key} ssh-storage-member:{nick}:{time.strftime('%Y%m%d')}"  # символы проверены — кавычки не нужны
+        sh = (member_vars(nick, login) +
+              'if id "$L" >/dev/null 2>&1; then home; ours && mine || { echo "✗ пользователь $L уже есть и это не участник $N — не трогаю"; exit 4; }; new=0; '
+              'else useradd -m -s /bin/sh "$L" 2>/dev/null || adduser -D -s /bin/sh "$L" || exit 1; new=1; home; '
+              # "!" = заблокирован (sshd без PAM не пустит и по ключу); "*" = пароля нет, вход по ключу работает
+              'case "$(pw)" in "!"|"!!") usermod -p "*" "$L" 2>/dev/null || sed -i "s/^$L:!*:/$L:*:/" /etc/shadow;; esac; fi; '
+              'echo "$N" > "$R/$L"; mkdir -p "$h/.ssh" || exit 1; '
+              f'grep -qF "{key.split()[1]}" "$f" 2>/dev/null || printf "%s\\n" "{line}" >> "$f" || exit 1; '
+              'chmod 700 "$h/.ssh"; chmod 600 "$f"; chown -R "$L": "$h/.ssh"; '
+              'if [ -f "$R/$L.locked" ]; then ' + UNLOCK_SH + 'rm -f "$R/$L.locked"; fi; '
+              f'for g in admin operator viewer; do [ "$g" = {role} ] || leave ssh-storage-$g; done; '
+              f'grp ssh-storage-{role}; join ssh-storage-{role}; '
+              'for g in adm systemd-journal; do getent group $g >/dev/null && join $g; done; ' +
+              # пароль — до выдачи sudo: прерванный ввод не оставит sudo без пароля
+              ('case "$(pw)" in ""|"!"*|"*"*) echo "Временный пароль sudo для $L:"; passwd "$L" || exit 1; '
+               'if passwd -e "$L" >/dev/null 2>&1 || chage -d 0 "$L" 2>/dev/null; then echo "  $L сменит его при первом входе"; '
+               'else echo "  ⚠ сервер не умеет просить смену — попросите $L выполнить passwd"; fi;; esac; '
+               'SG=$(getent group sudo >/dev/null && echo sudo || echo wheel); grp $SG; join $SG; '
+               if role == "admin" else 'leave sudo; leave wheel; ') +
+              f'id -nG "$L" | grep -Eq "(^| )ssh-storage-{role}( |$)" || {{ echo "✗ не удалось выдать роль"; exit 1; }}; '
+              '[ $new = 1 ] && w=создан || w=обновлён; echo "✓ $w $L ($N): ключ на месте, группы: $(id -nG "$L")"')
+        return as_root(sh)
 
     def revoke_cmd(nick):
-        """Снять ключи участника (метка ssh-storage-member:<ник>) у всех пользователей сервера; копия — *.ssh-storage.bak.
-        Пользователь и его файлы остаются."""
-        assert re.fullmatch(NICK_RE, nick)
-        t = f" ssh-storage-member:{nick}:"
-        return (f'S=""; [ "$(id -u)" = 0 ] || S=sudo; $S sh -c \'n=0; for h in $(getent passwd | cut -d: -f6 | sort -u); do '
-                f'f="$h/.ssh/authorized_keys"; grep -q "{t}" "$f" 2>/dev/null || continue; '
-                f'cp "$f" "$f.ssh-storage.bak" && {{ grep -v "{t}" "$f.ssh-storage.bak"; true; }} > "$f.new" && cat "$f.new" > "$f" && rm -f "$f.new" || exit 1; '
-                f'n=$((n+1)); done; [ $n -gt 0 ] || exit 3; echo "✓ ключи сняты у пользователей: $n"\''')
+        """Отозвать участника: снять ключи с меткой ника у всех (копия *.ssh-storage.bak). Его пользователя (реестр или метка,
+        группа ssh-storage-*, не root и не вы) ещё и заблокировать, убрать из sudo, выгнать из сеансов. Файлы остаются."""
+        sh = (member_vars(nick) + 'n=0; for L in $(getent passwd | cut -d: -f1); do home; m=0; ours && mine && m=1; t=0; '
+              'grep -q "$T" "$f" 2>/dev/null && { ' + STRIP_SH + 't=1; }; '
+              'if [ $m = 1 ]; then ' + LOCK_SH + 'echo "✓ $L: ключи сняты, вход заблокирован, сеансы закрыты, sudo снят"; '
+              'elif [ $t = 1 ]; then echo "✓ у $L снят только ключ"; else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3')
+        return as_root(sh)
 
     def delete_member_cmd(nick):
-        """Удалить участника полностью: пользователя с ключом ssh-storage-member:<ник> и в группе ssh-storage-<роль>
-        (созданного нашим меню) — вместе с домашней папкой. root и того, кто удаляет, не трогает: у них только снимает ключ."""
-        assert re.fullmatch(NICK_RE, nick)
-        t = f" ssh-storage-member:{nick}:"
-        return (f'U=$(id -un); S=""; [ "$(id -u)" = 0 ] || S=sudo; $S env U="$U" sh -c \'n=0; for l in $(getent passwd | cut -d: -f1); do '
-                f'h=$(getent passwd "$l" | cut -d: -f6); f="$h/.ssh/authorized_keys"; grep -q "{t}" "$f" 2>/dev/null || continue; '
-                f'if [ "$l" != root ] && [ "$l" != "$U" ] && id -nG "$l" | grep -Eq "(^| )ssh-storage-(admin|operator|viewer)( |$)"; then '
-                f'pkill -KILL -u "$l" 2>/dev/null; sleep 1; userdel -r "$l" 2>/dev/null; '
-                f'if id "$l" >/dev/null 2>&1; then deluser --remove-home "$l" || exit 1; fi; echo "✓ удалён пользователь $l и его папка"; '
-                f'else cp "$f" "$f.ssh-storage.bak" && {{ grep -v "{t}" "$f.ssh-storage.bak"; true; }} > "$f.new" && cat "$f.new" > "$f" && rm -f "$f.new" || exit 1; '
-                f'echo "✓ у $l снят только ключ (не создан меню участников — пользователя не удаляю)"; fi; '
-                f'n=$((n+1)); done; [ $n -gt 0 ] || exit 3\''')
+        """Удалить участника полностью: его пользователя (реестр или метка, группа ssh-storage-*) с домашней папкой —
+        в том числе уже отозванного. root и того, кто удаляет, не трогает: у них только снимает ключ."""
+        sh = (member_vars(nick) + 'n=0; for L in $(getent passwd | cut -d: -f1); do home; m=0; ours && mine && m=1; '
+              'if [ $m = 1 ]; then pkill -KILL -u "$L" 2>/dev/null; sleep 1; userdel -r "$L" 2>/dev/null; '
+              'if id "$L" >/dev/null 2>&1; then deluser --remove-home "$L" || exit 1; fi; rm -f "$R/$L" "$R/$L.locked"; '
+              'echo "✓ удалён пользователь $L и его папка"; '
+              'elif grep -q "$T" "$f" 2>/dev/null; then ' + STRIP_SH + 'echo "✓ у $L снят только ключ (не участник — не удаляю)"; '
+              'else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3')
+        return as_root(sh)
 
     def ssh_alive(s):
         """Отвечает ли sshd — через сам ssh (работает и с ProxyJump), без входа. Жив — только при явном ответе sshd
@@ -2304,19 +2347,22 @@ let
             if known: print(dim("Добавленные через это меню (можно ввести номер):")); [print(f"  {n}. {k}") for n, k in enumerate(known, 1)]
             nick = ask("Ник участника", validate=lambda v: bool(re.fullmatch(NICK_RE, v)) or v.isdigit() and 1 <= int(v) <= len(known))
             if nick.isdigit() and 1 <= int(nick) <= len(known): nick = known[int(nick) - 1]
+            n_all = len(sv); sv = pick_many(sv, "Где")
+            if not sv: return
             full = menu(["Только снять ключи — пользователь и его файлы останутся",
                          "Удалить полностью — пользователя, его папку и ключи (необратимо)", "Назад"], default=1)
             if full not in ("1", "2"): return
             full = full == "2"
             if full:
-                print(red(f"\nНа всех серверах ({len(sv)}) будут удалены пользователи участника {nick} и все их файлы. Вернуть нельзя."))
+                print(red(f"\nНа {', '.join(x['name'] for x in sv)} будут удалены пользователи участника {nick} и все их файлы. Вернуть нельзя."))
                 print(dim("Удаляются только созданные через меню участников; ваш пользователь и root — никогда."))
                 if input(red(f"Для подтверждения введите ник {nick}: ")).strip() != nick: return
             else:
-                print(yellow(f"\nКлючи участника {nick} будут сняты на всех серверах ({len(sv)}). Пользователь и его файлы останутся."))
+                print(yellow(f"\nУчастник {nick} на {', '.join(x['name'] for x in sv)}: ключи снять, вход заблокировать, "
+                             "открытые сеансы закрыть, sudo снять. Пользователь и файлы останутся; вернуть — «Добавить участника»."))
                 if not yes(red("Отозвать?")): return
             cmd = delete_member_cmd(nick) if full else revoke_cmd(nick)
-            ch = self.session(f"{'удалить' if full else 'отозвать'} участника {nick} на всех серверах ({len(sv)})", danger=True)
+            ch = self.session(f"{'удалить' if full else 'отозвать'} участника {nick} на серверах ({len(sv)})", danger=True)
             if not ch: return
             res = []
             try:
@@ -2329,7 +2375,7 @@ let
                 bad = [x for x, w in res if w is None]
                 try: ch.call({"t": "report", "ok": not bad, "text": f"отзыв {nick}: не выполнен на {len(bad)} из {len(res)}"})
                 except (OSError, ConnectionError, ValueError): pass
-                self.sync_members(ch, drop=nick if full and not bad else None)
+                self.sync_members(ch, drop=nick if full and not bad and len(sv) == n_all else None)  # удалён не везде — ник остаётся
             finally: ch.close()
             header(f"итог отзыва · {nick}")
             for x, w in res: print(f"  {server_line(x)}  " + (green(w) if w else red("не выполнено (недоступен или отказ sudo) — повторите")))
