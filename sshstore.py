@@ -28,6 +28,17 @@ PC_STATE = os.path.join(HERE, "pc.json")
 LEGACY_VAULT = os.path.join(HERE, "vault.json")
 PHONE = os.path.join(HERE, "phone.json")
 TCP_PORT = 47232
+# Версия программы: ГГГГ.ММ.ДД[.N]. Поднимать при каждом выпуске — телефон не ставит версию старее своей.
+VERSION = "2026.10.23"
+# Автообновление телефона с ПК (сообщения version / update_part / update_done). Эти имена и поля НЕ менять и не удалять:
+# по ним обновляются телефоны со старыми версиями. Новое — только новыми полями/типами (неизвестное обе стороны игнорируют).
+UPD_CHUNK, UPD_MAX = 256 * 1024, 8 << 20
+
+def ver_key(v):
+    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:4])
+
+def self_bytes():
+    with open(os.path.abspath(__file__), "rb") as f: return f.read()
 RAM = "/dev/shm" if os.path.isdir("/dev/shm") else None
 IS_PHONE = "com.termux" in os.environ.get("PREFIX", "") or "--phone" in sys.argv
 PHONE_TAG, RECOVERY_TAG = "ssh-storage-phone", "ssh-storage-recovery"
@@ -960,6 +971,9 @@ class Phone:
                         if self.pair(conn, msg): return
                     elif mode == "wait" and msg.get("t") == "hello":
                         self.session(conn, msg)
+                        if getattr(self, "restart", False):  # новая версия уже на месте — запускаем её
+                            conn.close(); srv.close()
+                            print(dim("Перезапуск…")); os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), "--install"])
                 except (ConnectionError, OSError, ValueError, KeyError, TypeError, IndexError, RuntimeError) as e:
                     print(red(f"✗ {e}\n"))
                 finally:
@@ -1015,7 +1029,7 @@ class Phone:
         pc = peer["name"]
         self.log(pc, intent, "разрешено" if allow else "отклонено")
         if not allow: print(); return
-        signs, signed, target, approved, to_delete, pending = 0, False, None, set(), [], None
+        signs, signed, target, approved, to_delete, pending, upd = 0, False, None, set(), [], None, None
         while True:
             try: m = ch.recv()
             except (ConnectionError, OSError):
@@ -1026,6 +1040,37 @@ class Phone:
             if t == "list":
                 ch.send({"servers": self.d["servers"], "line": self.ks.line(), "recovery": self.d["recovery"],
                          "members": self.d.get("members", [])})
+            elif t == "version":
+                data, upd = self_bytes(), None
+                theirs, size = str(m.get("v", "")), m.get("size")
+                if (m.get("sha") != hashlib.sha256(data).hexdigest() and isinstance(size, int) and 0 < size <= UPD_MAX
+                        and ver_key(theirs) >= ver_key(VERSION)):
+                    print(yellow(f"  На компьютере «{pc}» другая версия программы: {theirs or '?'} (на телефоне {VERSION})."))
+                    if yes(blue("  Обновить телефон? Да — если вы сами обновляли программу на компьютере."), True):
+                        upd = {"sha": m.get("sha"), "size": size, "buf": bytearray()}
+                ch.send({"ok": True, "want": upd is not None, "v": VERSION})
+            elif t == "update_part":
+                b = base64.b64decode(str(m.get("b", ""))) if upd else b""
+                ok = bool(upd) and m.get("i") == len(upd["buf"]) and len(upd["buf"]) + len(b) <= upd["size"]
+                if ok: upd["buf"] += b
+                else: upd = None  # сбой порядка/размера — обновление отменяется целиком
+                ch.send({"ok": ok})
+            elif t == "update_done":
+                ok = bool(upd) and hashlib.sha256(upd["buf"]).hexdigest() == upd["sha"]
+                if ok:
+                    try: compile(bytes(upd["buf"]), "sshstore.py", "exec")
+                    except (SyntaxError, ValueError): ok = False
+                if ok:
+                    me = os.path.abspath(__file__); tmp = me + ".new"
+                    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
+                        f.write(upd["buf"]); f.flush(); os.fsync(f.fileno())
+                    os.chmod(tmp, 0o400); os.replace(tmp, me)
+                    self.log(pc, "обновление программы", "выполнен"); self.restart = True
+                    print(green("  ✓ Программа обновлена — перезапущу после сеанса"))
+                elif upd is not None or m.get("sha"):
+                    print(red("  ✗ Обновление не прошло проверку — оставлена старая версия"))
+                upd = None
+                ch.send({"ok": ok})
             elif t == "members":
                 mem = [x for x in m.get("members", []) if isinstance(x, str) and re.fullmatch(NICK_RE, x)]
                 self.d["members"] = mem; self.save(); ch.send({"ok": True})
@@ -1583,9 +1628,22 @@ class PC:
             print(cyan("  Подтвердите на телефоне, если там тот же код…"))
             if not ch.recv().get("allow"):
                 print(red("✗ Отклонено на телефоне")); ch.close(); pause(); return None
+            self.offer_update(ch)
             return ch
         except (OSError, ConnectionError, ValueError, KeyError) as e:
             print(red(f"✗ {e}")); pause(); return None
+
+    def offer_update(self, ch):
+        """Телефон сам решает, нужна ли ему эта версия; старый телефон ответит {"ok": False} — тогда ничего."""
+        data = self_bytes()
+        r = ch.call({"t": "version", "v": VERSION, "sha": hashlib.sha256(data).hexdigest(), "size": len(data)})
+        if not r.get("want"): return
+        print(dim(f"Обновляю программу на телефоне ({r.get('v', '?')} → {VERSION})…"))
+        for i in range(0, len(data), UPD_CHUNK):
+            if not ch.call({"t": "update_part", "i": i, "b": base64.b64encode(data[i:i + UPD_CHUNK]).decode()}).get("ok"):
+                ch.call({"t": "update_done"}); print(red("✗ Телефон отклонил обновление")); return
+        print(green("✓ Телефон обновлён (перезапустится после сеанса)") if ch.call({"t": "update_done"}).get("ok")
+              else red("✗ Обновление на телефоне не прошло проверку"))
 
     def ensure_recovery(self):
         if self.d["recovery"] is not None: return

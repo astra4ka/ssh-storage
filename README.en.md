@@ -87,7 +87,9 @@ The `openssh` package lets you log in to servers directly from the phone. Everyt
 
 ### Update
 
-Update the computer first (`sh install.sh` or `sudo nixos-rebuild switch`), then repeat the phone install with the same command. Pairing, the server list and the key are kept.
+Update the program on the computer (`sh install.sh` or `sudo nixos-rebuild switch`). At the next session with the computer, the phone asks whether to update itself. Answer yes only if you updated the computer yourself. The program travels over the encrypted pairing channel, the phone checks its checksum and never installs a version older than its own. After the session the phone restarts with the new version. Pairing, the server list and the key are kept.
+
+If the phone runs a version without auto-update (before October 2026), update it once by hand with the same install command.
 
 ### Pairing and the recovery password
 
