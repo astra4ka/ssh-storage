@@ -1172,6 +1172,7 @@ class Phone:
                 elif a == "5":
                     port = int(ask("Порт панели на сервере", 2053, validate=port_ok))
                     print(green(f"Откройте в браузере телефона http://127.0.0.1:{port}/  Ctrl+C — закрыть."))
+                    print(yellow("Пока туннель открыт, порт доступен и другим приложениям телефона — закройте сразу после работы."))
                     try: self.ssh(sv[i], opts=("-N", "-L", f"127.0.0.1:{port}:127.0.0.1:{port}"))
                     except KeyboardInterrupt: pass
                 elif a == "2": header("изменить"); sv[i] = dict(edit_server(sv[i], sv), **({"pending": True} if sv[i].get("pending") else {})); self.save()
@@ -1831,6 +1832,9 @@ class PC:
             a = menu(["Включить запись команд", "История команд", "Выключить (откат к прежним настройкам)", "Назад"],
                      default=2)
             if a == "1":
+                print(yellow("Будут записываться команды ВСЕХ пользователей сервера с аргументами (в т.ч. пароль, если его набрать\n"
+                             "прямо в команде: mysql -pПАРОЛЬ). Читать журнал может любой с sudo. Предупредите участников."))
+                if not yes("Включить?"): continue
                 self.danger("включить запись команд (auditd)", s,
                             lambda ch: (self.phone_ssh(ch, s, "sh -c " + shlex.quote(AUDIT_ON_CMD), tty=True)[0] == 0,
                                         "запись команд включена"))
@@ -2081,6 +2085,7 @@ class PC:
         if not ch: return
         try:
             print(green(f"Откройте в браузере http://127.0.0.1:{port}/ (путь панели — как обычно). Ctrl+C — закрыть туннель."))
+            print(yellow("Пока туннель открыт, порт доступен и другим программам на этом компьютере — закройте сразу после работы."))
             print(dim("Подсказка: в 3x-ui можно оставить панель только на 127.0.0.1 — снаружи её не будет видно."))
             try: rc, _ = self.phone_ssh(ch, s, opts=("-N", "-L", f"127.0.0.1:{port}:127.0.0.1:{port}"))
             except KeyboardInterrupt: rc = 0
