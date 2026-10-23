@@ -1164,29 +1164,36 @@ let
             while True:
                 header("серверы")
                 sv = self.d["servers"]
-                ch = menu([server_line(s) for s in sv] + [green("+ Добавить вручную"), red("Отозвать участника (снять ключи)"), dim("Назад")],
-                          default=len(sv) + 3)
-                if ch == str(len(sv) + 3): return
-                if ch == str(len(sv) + 2): self.revoke_member()
+                adm = self.d["recovery"] != ""  # у участника команды (recovery == "") отзыва нет — это делает админ
+                extra = [green("+ Добавить вручную")] + ([red("Отозвать участника (снять ключи)")] if adm else [])
+                ch = menu([server_line(s) for s in sv] + extra + [dim("Назад")], default=len(sv) + len(extra) + 1)
+                if ch == str(len(sv) + len(extra) + 1): return
+                if adm and ch == str(len(sv) + 2): self.revoke_member()
                 elif ch == str(len(sv) + 1):
                     header("новый сервер"); s = dict(edit_server(servers=sv), pending=True)
                     sv.append(s); self.save(); self.show_cmd(s)
                 elif ch.isdigit() and 1 <= int(ch) <= len(sv):
                     i = int(ch) - 1
                     header(sv[i]["name"])
-                    a = menu(["Подключиться", "Изменить", "Команда установки для сервера", "Удалить", "Назад"], default=1)
+                    a = menu(["Подключиться", "Изменить", "Команда установки для сервера", "Удалить",
+                              "Туннель к веб-панели (3x-ui и др.)", "Назад"], default=1)
                     if a == "1": clear(); self.ssh(sv[i])
+                    elif a == "5":
+                        port = int(ask("Порт панели на сервере", 2053, validate=port_ok))
+                        print(green(f"Откройте в браузере телефона http://127.0.0.1:{port}/  Ctrl+C — закрыть."))
+                        try: self.ssh(sv[i], opts=("-N", "-L", f"127.0.0.1:{port}:127.0.0.1:{port}"))
+                        except KeyboardInterrupt: pass
                     elif a == "2": header("изменить"); sv[i] = dict(edit_server(sv[i], sv), **({"pending": True} if sv[i].get("pending") else {})); self.save()
                     elif a == "3": self.show_cmd(sv[i])
                     elif a == "4" and yes(red(f"Удалить «{sv[i]['name']}» из списка?")):
                         sv.pop(i); self.save()
 
-        def ssh(self, s, *cmd):
+        def ssh(self, s, *cmd, opts=()):
             """Вход прямо с телефона: тот же агент, что и на ПК, но подписывает свой Keystore."""
             if not shutil.which(SSH): print(red("Нет ssh: выполните pkg install openssh")); pause(); return 255
             a = Agent(self.ks.blob, lambda d: ecdsa_sig(self.ks.sign(d)))
             try: return subprocess.call(ssh_cmd(s, "-o", f"IdentityAgent={a.path}", "-o", "IdentitiesOnly=yes",
-                                                "-i", a.pubfile(), *(["-t"] if cmd else [])) + list(cmd))
+                                                "-i", a.pubfile(), *(["-t"] if cmd else []), *opts) + list(cmd))
             finally: a.close()
 
         def revoke_member(self):
@@ -1424,8 +1431,10 @@ let
     LOGIN_RE = r"[a-z_][a-z0-9_-]{0,31}"
     PUBKEY_RE = r"(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+=*"
 
-    # S.6: роль = группа на сервере. Сама по себе прав не даёт (sudo не настраивается) — задел под Team (principals по ролям).
-    ROLES = {"admin": "администратор", "operator": "оператор", "viewer": "наблюдатель"}
+    # S.6: роль = группа ssh-storage-<роль> + права: admin — sudo (свой пароль, сменить при первом входе) и журналы;
+    # operator / viewer — только чтение журналов (adm, systemd-journal), без sudo.
+    ROLES = {"admin": "администратор — sudo и журналы", "operator": "оператор — журналы, без sudo",
+             "viewer": "наблюдатель — журналы, без sudo"}
 
     def member_cmd(login, key, nick, role="viewer"):
         """Создать пользователя и прописать ключ с меткой ssh-storage-member:<ник>. Существующего — только если это
@@ -1442,8 +1451,12 @@ let
                 f'h=$(getent passwd {login} | cut -d: -f6); mkdir -p "$h/.ssh"; '
                 f'printf "%s\\n" "{line}" > "$h/.ssh/authorized_keys"; '
                 f'chmod 700 "$h/.ssh"; chmod 600 "$h/.ssh/authorized_keys"; chown -R {login}: "$h/.ssh"; '
-                f'getent group {g} >/dev/null || groupadd {g} 2>/dev/null || addgroup {g}; usermod -aG {g} {login} 2>/dev/null || addgroup {login} {g}\' '
-                f'&& echo "✓ создан {login}, ключ прописан, группа {g} (без sudo — права выдаются отдельно)"')
+                f'getent group {g} >/dev/null || groupadd {g} 2>/dev/null || addgroup {g}; usermod -aG {g} {login} 2>/dev/null || addgroup {login} {g}; '
+                f'for x in adm systemd-journal; do getent group $x >/dev/null && usermod -aG $x {login}; done; '
+                + (f'x=$(getent group sudo >/dev/null && echo sudo || echo wheel); usermod -aG $x {login}; '
+                   f'echo "Временный пароль sudo для {login} (участник сменит его при первом входе):"; passwd {login}; passwd -e {login} >/dev/null; '
+                   if role == "admin" else "") +
+                f'true\' && echo "✓ создан {login}, ключ прописан, группа {g}' + (", sudo" if role == "admin" else ", без sudo") + ', журналы"')
 
     def revoke_cmd(nick):
         """Снять ключи участника (метка ssh-storage-member:<ник>) у всех пользователей сервера; копия — *.ssh-storage.bak.
@@ -1681,9 +1694,10 @@ let
         def section_servers(self):
             while True:
                 header("серверы")
+                # участнику команды (recovery == "") управление участниками не показываем — это делает админ
                 a = menu(["Список серверов (изменить / команда установки / удалить)", "Добавить сервер",
-                          "Новый VPS: настроить с нуля", "Массовое добавление", "Массовое удаление", "Перевыпуск ключей (на всех серверах)",
-                          "Участники серверов (командный режим)", "Назад"],
+                          "Новый VPS: настроить с нуля", "Массовое добавление", "Массовое удаление", "Перевыпуск ключей (на всех серверах)"]
+                         + ([] if self.d["recovery"] == "" else ["Участники серверов (командный режим)"]) + ["Назад"],
                          default=1)
                 if a == "1": self.servers()
                 elif a == "2": self.add()
@@ -1691,7 +1705,7 @@ let
                 elif a == "4": self.bulk_add()
                 elif a == "5": self.bulk_delete()
                 elif a == "6": self.rekey()
-                elif a == "7":
+                elif a == "7" and self.d["recovery"] != "":
                     b = menu(["Добавить участника на серверы", "Отозвать или удалить участника", "Назад"], default=1)
                     if b == "1": self.add_member_many()
                     elif b == "2": self.revoke_member()
@@ -1713,7 +1727,8 @@ let
             ("Проверка на зачатки неисправностей (быстрая / полная)", 1),
             ("Перезагрузить сервер", 3),
             ("Создать пользователя для участника (командный режим)", 3),
-            ("Проверка процессов (подмена системных, новые программы, скрытые процессы)", 1)]
+            ("Проверка процессов (подмена системных, новые программы, скрытые процессы)", 1),
+            ("Туннель к веб-панели (3x-ui и др.) — панель не торчит в интернет", 1)]
 
         def section_actions(self):
             s = self.pick_server("действия на сервере")
@@ -1725,7 +1740,7 @@ let
                 items = []
                 for name, need in self.ACTIONS:
                     mark = "" if rank >= need or not lv else yellow(f"  (нужно: {NEED[need]})")
-                    items.append(name + mark + ("" if name.startswith(("История", "Запись", "Попытки", "Диагностика", "Проверка", "Перезагрузить", "Создать")) else dim("  — в разработке")))
+                    items.append(name + mark + ("" if name.startswith(("История", "Запись", "Попытки", "Диагностика", "Проверка", "Перезагрузить", "Создать", "Туннель")) else dim("  — в разработке")))
                 items += ["Проверить права на сервере", "Назад"]
                 a = menu(items, default=len(items) - 1)
                 if a == str(len(items) - 1):
@@ -1751,8 +1766,10 @@ let
                     elif a == "4": self.diagnose(s); continue
                     elif a == "5": self.health(s); continue
                     elif a == "6": self.reboot(s); continue
+                    elif a == "7" and self.d["recovery"] == "": print(yellow("Участников добавляет админ команды."))
                     elif a == "7": self.add_member(s); continue
                     elif a == "8": self.check_procs(s); continue
+                    elif a == "9": self.tunnel(s); continue
                     else:
                         print(yellow("Этот пункт в разработке (этап 2)."))
                     pause()
@@ -1906,7 +1923,7 @@ let
             nick = ask("Ник участника (для метки ключа)", login, validate=lambda v: bool(re.fullmatch(NICK_RE, v)))
             key = " ".join(ask("Публичный ключ участника (строка ssh-ed25519 …)",
                                validate=lambda v: bool(re.fullmatch(PUBKEY_RE, " ".join(v.split()[:2])))).split()[:2])
-            print(dim("  Роль — группа на сервере (ssh-storage-<роль>); прав сама не даёт, нужна для учёта и версии Team."))
+            print(dim("  Роль задаёт права. Администратору sudo нужен только если он ставит пакеты и правит системные файлы."))
             a = menu(list(ROLES.values()), default=3)
             role = list(ROLES)[int(a) - 1] if a in ("1", "2", "3") else "viewer"
             return login, nick, key, role
@@ -2024,7 +2041,22 @@ let
             print(green(f"✓ «{s['name']}»: ключ телефона и резервный ключ прописаны"))
             return True
 
-        def phone_ssh(self, ch, s, *cmd, tty=False):
+        def tunnel(self, s):
+            port = int(ask("Порт панели на сервере", 2053, validate=port_ok))
+            ch = self.session(f"туннель к панели {s['name']}:{port}")
+            if not ch: return
+            try:
+                print(green(f"Откройте в браузере http://127.0.0.1:{port}/ (путь панели — как обычно). Ctrl+C — закрыть туннель."))
+                print(dim("Подсказка: в 3x-ui можно оставить панель только на 127.0.0.1 — снаружи её не будет видно."))
+                try: rc, _ = self.phone_ssh(ch, s, opts=("-N", "-L", f"127.0.0.1:{port}:127.0.0.1:{port}"))
+                except KeyboardInterrupt: rc = 0
+                try: ch.call({"t": "result", "ok": rc != 255})
+                except (OSError, ConnectionError, ValueError): pass
+            except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: print(red(f"✗ {e}"))
+            finally: ch.close()
+            pause()
+
+        def phone_ssh(self, ch, s, *cmd, tty=False, opts=()):
             """ssh на сервер ключом телефона (подписи — на телефоне). Возвращает (код, stdout|None).
             Один вход: первое соединение становится мастером (ControlMaster) и заодно проверяет права;
             команда или интерактивный сеанс идут через него без новых подписей."""
@@ -2045,6 +2077,7 @@ let
                 if p.returncode == 255: return 255, None  # вход не прошёл
                 m = re.search(r"RIGHTS=([\w-]+)", p.stdout or "")
                 if m and m.group(1) in RIGHTS: self.set_rights(s, m.group(1))
+                if opts: return subprocess.call(base[:1] + list(opts) + base[1:]), None
                 if not cmd: return subprocess.call(base), None
                 # tty: вывод сразу на экран, sudo может спросить пароль (он не проходит через программу)
                 if tty: return subprocess.call(base[:1] + ["-t"] + base[1:] + list(cmd)), None
