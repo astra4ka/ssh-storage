@@ -2,8 +2,10 @@
 # SSH Storage installer: Linux (Arch, Debian/Ubuntu, Fedora, openSUSE, Alpine,
 # Void and their derivatives), NixOS, macOS.
 #
-#   sh install.sh              install / update
+#   sh install.sh              install / update (from a cloned repo or unpacked archive)
 #   sh install.sh --uninstall  remove (your data in ~/.local/share/ssh-storage is kept)
+#   curl -fsSL https://raw.githubusercontent.com/OWNER/ssh-storage/main/install.sh | sh
+#                              one-line install: missing files are downloaded from REPO_RAW below
 #
 # What it changes, nothing else:
 #   * installs python3 and the ssh client ONLY if they are missing (asks for sudo);
@@ -15,6 +17,8 @@
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+# Where the one-line install downloads files from. Change OWNER to your GitHub name (or set SSH_STORAGE_RAW).
+REPO_RAW="${SSH_STORAGE_RAW:-https://raw.githubusercontent.com/OWNER/ssh-storage/main}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/ssh-storage"
 BEGIN="# >>> ssh-storage >>>"
 END="# <<< ssh-storage <<<"
@@ -122,7 +126,7 @@ nixos() {
   for d in /etc/nixos/home /etc/nixos "$HOME/.config/home-manager" "$HOME/.config/nixos"; do
     if [ -f "$d/default.nix" ] || [ -f "$d/configuration.nix" ] || [ -f "$d/home.nix" ]; then dir=$d; break; fi
   done
-  printf 'Folder for ssh-storage.nix [%s]: ' "$dir"; read -r ans || true
+  printf 'Folder for ssh-storage.nix [%s]: ' "$dir"; ans=""; read -r ans </dev/tty 2>/dev/null || true
   dir=${ans:-$dir}
   [ -d "$dir" ] || die "No such folder: $dir"
   if [ -w "$dir" ]; then cp "$HERE/ssh-storage.nix" "$dir/"; else sudo cp "$HERE/ssh-storage.nix" "$dir/"; fi
@@ -143,13 +147,33 @@ Your config files were NOT edited by this script.
 EOF
 }
 
+# ---------- one-line install: script came from curl | sh, files are not next to it ----------
+fetch() {   # fetch FILE into $HERE
+  if has curl; then curl -fsSL "$REPO_RAW/$1" -o "$HERE/$1"
+  elif has wget; then wget -qO "$HERE/$1" "$REPO_RAW/$1"
+  else die "Need curl or wget to download $1."; fi || die "Download failed: $REPO_RAW/$1"
+  [ -s "$HERE/$1" ] || die "Downloaded $1 is empty."
+}
+get_files() {
+  [ -f "$HERE/sshstore.py" ] && return 0
+  case "$REPO_RAW" in *"/OWNER/"*) die "Set your GitHub name in REPO_RAW (install.sh) or run with SSH_STORAGE_RAW=..." ;; esac
+  HERE=$(mktemp -d); trap 'rm -rf "$HERE"' EXIT
+  say "Downloading from $REPO_RAW"
+  fetch sshstore.py
+  [ "$ID" = nixos ] && fetch ssh-storage.nix
+  return 0
+}
+
 # ---------- main ----------
 [ "${1:-}" = "--uninstall" ] && { uninstall; exit 0; }
+get_files
 
 if [ "$ID" = nixos ]; then nixos; exit 0; fi
 
 [ -f "$HERE/sshstore.py" ] || die "sshstore.py not found next to install.sh"
 install_pkgs
+python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$HERE/sshstore.py" 2>/dev/null \
+  || die "sshstore.py is damaged (not valid Python). Download again."
 install_qr || warn "qrencode not installed — the phone install command will be shown as text only"
 
 mkdir -p "$DATA"; chmod 700 "$DATA"

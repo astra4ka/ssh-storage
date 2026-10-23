@@ -1273,9 +1273,10 @@ def phone_main():
                 ph.d["peers"] = {}; ph.save()
         elif ch == "4":
             header("специальные возможности")
-            a = menu(["Журнал одобрений", "Стереть все данные", "Назад"], default=3)
+            a = menu(["Журнал одобрений", "Мой публичный ключ (отправить админу команды)", "Стереть все данные", "Назад"], default=4)
             if a == "1": header("журнал одобрений"); show_journal(ph.d.get("log", [])); pause()
-            elif a == "2" and phone_wipe(ph.ks): return
+            elif a == "2": header("публичный ключ"); print(cyan(ph.ks.line()) + "\n"); print(dim("Это не секрет: скопируйте и отправьте админу.")); pause()
+            elif a == "3" and phone_wipe(ph.ks): return
         elif ch == "5": clear(); return
 
 def show_journal(log):
