@@ -1449,7 +1449,7 @@ let
 
     # S.6: роль = группа ssh-storage-<роль> + права: admin — sudo (свой пароль, сменить при первом входе) и журналы;
     # operator / viewer — только чтение журналов (adm, systemd-journal), без sudo.
-    ROLES = {"admin": "администратор — sudo и журналы", "operator": "оператор — журналы, без sudo",
+    ROLES = {"admin": "администратор — sudo и журналы", "operator": "оператор — журналы и sudo systemctl restart/reload",
              "viewer": "наблюдатель — журналы, без sudo"}
 
     # Общие куски shell для участников (под root, нужны L, N, T, U). Без set -e: busybox (Alpine) не знает usermod/gpasswd/
@@ -1471,6 +1471,13 @@ let
                  '|| case "$(pw)" in "!"?*) passwd -u "$L" >/dev/null 2>&1;; esac; ')  # одиночный "!" не трогаем: busybox сделал бы пустой пароль
     STRIP_SH = ('cp "$f" "$f.ssh-storage.bak" && { grep -v "$T" "$f.ssh-storage.bak"; true; } > "$f.new" '
                 '&& cat "$f.new" > "$f" && rm -f "$f.new" || exit 1; ')
+
+    # Группа операторов: sudo только на systemctl restart/reload (любой сервис). Файл ставится один раз, проверяется visudo.
+    OPERATOR_SUDO_SH = (
+        'O=/etc/sudoers.d/ssh-storage-operator; C=$(command -v systemctl); '
+        'if [ -n "$C" ] && [ -d /etc/sudoers.d ] && [ ! -f "$O" ]; then '
+        'printf "%%ssh-storage-operator ALL=(root) %s restart *, %s reload *\\n" "$C" "$C" > "$O.new" && chmod 440 "$O.new" '
+        '&& visudo -cf "$O.new" >/dev/null 2>&1 && mv "$O.new" "$O" || rm -f "$O.new"; fi; ')
 
     def as_root(script):
         """Выполнить под root (или через sudo); U — кто вызывает, его никогда не трогаем."""
@@ -1496,12 +1503,14 @@ let
               'if [ -f "$R/$L.locked" ]; then ' + UNLOCK_SH + 'rm -f "$R/$L.locked"; fi; '
               f'for g in admin operator viewer; do [ "$g" = {role} ] || leave ssh-storage-$g; done; '
               f'grp ssh-storage-{role}; join ssh-storage-{role}; '
-              'for g in adm systemd-journal; do getent group $g >/dev/null && join $g; done; ' +
+              'for g in adm systemd-journal; do getent group $g >/dev/null && join $g; done; ' + OPERATOR_SUDO_SH +
               # пароль — до выдачи sudo: прерванный ввод не оставит sudo без пароля
               ('case "$(pw)" in ""|"!"*|"*"*) echo "Временный пароль sudo для $L:"; passwd "$L" || exit 1; '
                'if passwd -e "$L" >/dev/null 2>&1 || chage -d 0 "$L" 2>/dev/null; then echo "  $L сменит его при первом входе"; '
                'else echo "  ⚠ сервер не умеет просить смену — попросите $L выполнить passwd"; fi;; esac; '
                'SG=$(getent group sudo >/dev/null && echo sudo || echo wheel); grp $SG; join $SG; '
+               # на Arch группа wheel в sudoers часто закомментирована — проверяем, что sudo действительно разрешён
+               'sudo -l -U "$L" 2>/dev/null | grep -q "may run" || echo "  ⚠ sudo для $L не работает: в /etc/sudoers не разрешена группа $SG (visudo)"; '
                if role == "admin" else 'leave sudo; leave wheel; ') +
               f'id -nG "$L" | grep -Eq "(^| )ssh-storage-{role}( |$)" || {{ echo "✗ не удалось выдать роль"; exit 1; }}; '
               '[ $new = 1 ] && w=создан || w=обновлён; echo "✓ $w $L ($N): ключ на месте, группы: $(id -nG "$L")"')
@@ -1740,21 +1749,22 @@ let
             while True:
                 header("серверы")
                 # участнику команды (recovery == "") управление участниками не показываем — это делает админ
-                a = menu(["Список серверов (изменить / команда установки / удалить)", "Добавить сервер",
-                          "Новый VPS: настроить с нуля", "Массовое добавление", "Массовое удаление", "Перевыпуск ключей (на всех серверах)"]
-                         + ([] if self.d["recovery"] == "" else ["Участники серверов (командный режим)"]) + ["Назад"],
-                         default=1)
-                if a == "1": self.servers()
-                elif a == "2": self.add()
-                elif a == "3": self.new_vps()
-                elif a == "4": self.bulk_add()
-                elif a == "5": self.bulk_delete()
-                elif a == "6": self.rekey()
-                elif a == "7" and self.d["recovery"] != "":
-                    b = menu(["Добавить участника на серверы", "Отозвать или удалить участника", "Назад"], default=1)
-                    if b == "1": self.add_member_many()
-                    elif b == "2": self.revoke_member()
-                else: return
+                # участнику команды (recovery == "") не показываем «Новый VPS» (у него нет резервного ключа — при потере телефона
+                # сервер без паролей закроется насовсем) и управление участниками (это делает админ)
+                adm = self.d["recovery"] != ""
+                items = [("Список серверов (изменить / команда установки / удалить)", self.servers), ("Добавить сервер", self.add)] \
+                    + ([("Новый VPS: настроить с нуля", self.new_vps)] if adm else []) \
+                    + [("Массовое добавление", self.bulk_add), ("Массовое удаление", self.bulk_delete),
+                       ("Перевыпуск ключей (на всех серверах)", self.rekey)] \
+                    + ([("Участники серверов (командный режим)", self.members_menu)] if adm else [])
+                a = menu([t for t, _ in items] + ["Назад"], default=1)
+                if not (a.isdigit() and 1 <= int(a) <= len(items)): return
+                items[int(a) - 1][1]()
+
+        def members_menu(self):
+            b = menu(["Добавить участника на серверы", "Отозвать или удалить участника", "Назад"], default=1)
+            if b == "1": self.add_member_many()
+            elif b == "2": self.revoke_member()
 
         def section_pairing(self):
             while True:
@@ -1981,9 +1991,11 @@ let
             login, nick, key, role = self.ask_member()
             print(yellow(f"\nБудет создан пользователь {login} на {s['name']} с ключом участника {nick}."))
             if not yes(red("Выполнить?")): return
-            self.danger(f"создать пользователя {login} ({nick})", s,
-                        lambda ch: (self.phone_ssh(ch, s, "sh -c " + shlex.quote(member_cmd(login, key, nick, role)), tty=True)[0] == 0,
-                                    f"создан пользователь {login} ({nick})"))
+            def run(ch):
+                ok = self.phone_ssh(ch, s, "sh -c " + shlex.quote(member_cmd(login, key, nick, role)), tty=True)[0] == 0
+                if ok: self.sync_members(ch, add=nick)
+                return ok, f"создан пользователь {login} ({nick})"
+            self.danger(f"создать пользователя {login} ({nick})", s, run)
 
         def check_procs(self, s):
             ch = self.session(f"проверка процессов {s['name']} (только чтение)")
@@ -2347,7 +2359,7 @@ let
 
         def revoke_member(self):
             header("отозвать участника")
-            sv = [x for x in self.d["servers"] if server_ok(x)]
+            sv = [x for x in self.d["servers"] if server_ok(x) and not x.get("pending")]
             if not sv: print(yellow("Список серверов пуст.")); pause(); return
             known = self.d.get("members", [])
             if known: print(dim("Добавленные через это меню (можно ввести номер):")); [print(f"  {n}. {k}") for n, k in enumerate(known, 1)]
