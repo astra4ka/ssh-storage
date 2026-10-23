@@ -157,7 +157,7 @@ For teams of up to 10 people. There is one admin, who holds the recovery passwor
 | Role | Rights | For whom |
 |---|---|---|
 | administrator | sudo and log access | a developer who installs packages and edits configs |
-| operator | log access, no sudo | a helper who reads logs and works in the web panel through the tunnel |
+| operator | log access and only `sudo systemctl restart/reload` | a helper who restarts services, reads logs and works in the web panel through the tunnel |
 | viewer | log access, no sudo | someone who only checks things |
 
 Each member has their own user and key on the server, so the logs show who did what.
