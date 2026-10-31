@@ -4,7 +4,7 @@
 #
 #   sh install.sh              install / update (from a cloned repo or unpacked archive)
 #   sh install.sh --uninstall  remove (your data in ~/.local/share/ssh-storage is kept)
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/ssh-storage/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/astra4ka/ssh-storage/main/install.sh | sh
 #                              one-line install: missing files are downloaded from REPO_RAW below
 #
 # What it changes, nothing else:
@@ -17,8 +17,8 @@
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-# Where the one-line install downloads files from. Change OWNER to your GitHub name (or set SSH_STORAGE_RAW).
-REPO_RAW="${SSH_STORAGE_RAW:-https://raw.githubusercontent.com/OWNER/ssh-storage/main}"
+# Override SSH_STORAGE_RAW when installing from a fork or a pinned revision.
+REPO_RAW="${SSH_STORAGE_RAW:-https://raw.githubusercontent.com/astra4ka/ssh-storage/main}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/ssh-storage"
 BEGIN="# >>> ssh-storage >>>"
 END="# <<< ssh-storage <<<"

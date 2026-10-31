@@ -5,10 +5,11 @@
 (+ termux-api на телефоне).
 
 Телефон (Termux, ~/.ssh-storage/):
-  * SSH-ключ ECDSA P-256 в Android Keystore — неизвлекаемый, даже с root.
+  * SSH-ключ ECDSA P-256 в Android Keystore; аппаратная защита зависит от устройства.
   * Список серверов, редактирование, команда установки для сервера.
   * Каждый вход подтверждается на телефоне по коду сеанса.
-Компьютер (~/.local/share/ssh-storage/pc.json) — секретов нет:
+Компьютер (~/.local/share/ssh-storage/pc.json) — SSH-ключа телефона нет:
+  * pc.json содержит закрытый ключ сопряжения — файл нельзя публиковать.
   * Временный ssh-agent: подписи запрашиваются у телефона.
   * Добавление сервера: сам заходит на сервер и прописывает ключи.
 Резервный пароль (20 символов): из него выводится резервный ключ Ed25519,
@@ -29,7 +30,7 @@ LEGACY_VAULT = os.path.join(HERE, "vault.json")
 PHONE = os.path.join(HERE, "phone.json")
 TCP_PORT = 47232
 # Версия программы: ГГГГ.ММ.ДД[.N]. Поднимать при каждом выпуске — телефон не ставит версию старее своей.
-VERSION = "2026.10.23"
+VERSION = "2026.10.31"
 # Автообновление телефона с ПК (сообщения version / update_part / update_done). Эти имена и поля НЕ менять и не удалять:
 # по ним обновляются телефоны со старыми версиями. Новое — только новыми полями/типами (неизвестное обе стороны игнорируют).
 UPD_CHUNK, UPD_MAX = 256 * 1024, 8 << 20
@@ -44,6 +45,678 @@ IS_PHONE = "com.termux" in os.environ.get("PREFIX", "") or "--phone" in sys.argv
 PHONE_TAG, RECOVERY_TAG = "ssh-storage-phone", "ssh-storage-recovery"
 NICK_RE = r"[A-Za-z0-9_-]{1,32}"  # ник в подписи ключа: ssh-storage-phone:<ник>
 ANY_PHONE_TAG = PHONE_TAG + r"\(:[A-Za-z0-9_:-]*\)\{0,1\}"  # sed: старая подпись и с именем:ID:датой
+
+# ---------- язык ----------
+# Язык хранится в phone.json / pc.json (ключ "language") отдельно на каждом устройстве и не сбрасывается
+# при перезапуске и обновлении. Ключ сообщения — русский текст; английский перевод — в EN_MESSAGES.
+LANGUAGES = ("en", "ru")
+
+def _saved_language():
+    try:
+        with open(PHONE if IS_PHONE else PC_STATE) as f: code = json.load(f).get("language")
+    except (OSError, ValueError, AttributeError):
+        return "en"
+    return code if code in LANGUAGES else "en"
+
+LANG = _saved_language()
+
+def set_language(code):
+    global LANG
+    LANG = code if code in LANGUAGES else "en"
+
+def load_language(state):
+    set_language(state.get("language") if isinstance(state, dict) else None)
+
+def tr(message, **values):
+    text = message if LANG == "ru" else EN_MESSAGES.get(message, message)
+    return text.format(**values) if values else text
+
+# BEGIN GENERATED TRANSLATIONS
+EN_MESSAGES = {
+    "o() { echo \"$1|$2|$3\"; }\ndf -P -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 { u = $5 + 0; s = (u >= 95 ? \"crit\" : u >= 85 ? \"warn\" : \"ok\"); print s \"|диск \" $6 \"|занято \" u \"%\" }'\ndf -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 && $5 != \"-\" { u = $5 + 0; if (u >= 85) print (u >= 95 ? \"crit\" : \"warn\") \"|inode \" $6 \"|занято \" u \"% inode\" }'\n# только чтение — если у устройства нет ни одного rw-монтирования (bind-ro вроде /nix/store — норма)\nawk '$3 ~ /^(ext[234]|xfs|btrfs|f2fs)$/ { if ($4 ~ /^rw/) rw[$1] = 1; else if ($4 ~ /^ro(,|$)/) ro[$1] = $2 }\n  END { for (d in ro) if (!(d in rw)) print \"crit|ФС \" ro[d] \"|смонтирована только на чтение (часто — ошибки диска)\" }' /proc/mounts\nawk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } /^SwapTotal/ { st = $2 } /^SwapFree/ { sf = $2 }\n  END { p = 100 - a * 100 / t; printf \"%s|память|занято %d%%\\n\", (p >= 95 ? \"crit\" : p >= 85 ? \"warn\" : \"ok\"), p\n        if (st > 0) { q = 100 - sf * 100 / st; printf \"%s|swap|занято %d%%\\n\", (q >= 80 ? \"warn\" : \"ok\"), q } }' /proc/meminfo\nn=$(nproc 2>/dev/null || echo 1); read l1 l5 rest < /proc/loadavg\nawk -v l=\"$l5\" -v n=\"$n\" 'BEGIN { printf \"%s|нагрузка|%s за 5 мин на %d ядер\\n\", (l >= 2 * n ? \"crit\" : l >= n ? \"warn\" : \"ok\"), l, n }'\nif command -v timedatectl >/dev/null 2>&1; then\n  [ \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes ] && o ok время \"синхронизировано (NTP)\" || o warn время \"не синхронизировано с NTP — расходятся журналы, TLS, 2FA\"\nfi\nif [ \"$FULL\" = 1 ]; then\n  S=\"\"; [ \"$(id -u)\" = 0 ] || { sudo -n true 2>/dev/null && S=\"sudo -n\"; }\n  oom=$($S journalctl -k --since -7d -q --no-pager 2>/dev/null | grep -ci \"out of memory\")\n  [ \"${oom:-0}\" -gt 0 ] && o crit OOM \"процессы убиты из-за нехватки памяти за 7 дней: $oom\" || o ok OOM \"за 7 дней не было\"\n  t=$($S journalctl -p err --since today -q --no-pager 2>/dev/null | wc -l)\n  w=$($S journalctl -p err --since -7d --until today -q --no-pager 2>/dev/null | wc -l); avg=$((w / 6))\n  [ \"$t\" -gt $((avg * 2 + 10)) ] && o warn \"рост ошибок\" \"сегодня $t, обычно ~$avg в день\" || o ok \"ошибки журнала\" \"сегодня $t, обычно ~$avg в день\"\n  if command -v openssl >/dev/null 2>&1; then\n    for c in $($S sh -c 'ls /etc/letsencrypt/live/*/cert.pem' 2>/dev/null); do\n      e=$($S openssl x509 -enddate -noout -in \"$c\" 2>/dev/null | cut -d= -f2); [ -n \"$e\" ] || continue\n      x=$(date -d \"$e\" +%s 2>/dev/null); [ -n \"$x\" ] || continue; d=$(( (x - $(date +%s)) / 86400 ))\n      o \"$([ $d -lt 3 ] && echo crit || { [ $d -lt 14 ] && echo warn || echo ok; })\" \"SSL $(basename \"$(dirname \"$c\")\")\" \"истекает через $d дн.\"\n    done\n  fi\n  u=\"\"\n  if command -v apt >/dev/null 2>&1; then u=$(apt list --upgradable 2>/dev/null | grep -ci -- \"-security\")\n  elif command -v dnf >/dev/null 2>&1; then u=$(dnf -q updateinfo list --security 2>/dev/null | wc -l)\n  elif command -v checkupdates >/dev/null 2>&1; then u=$(checkupdates 2>/dev/null | wc -l); fi\n  [ -n \"$u\" ] && { [ \"$u\" -gt 0 ] && o warn \"обновления безопасности\" \"доступно: $u\" || o ok \"обновления безопасности\" \"нет\"; }\nfi\necho \"==END==\"": "o() { echo \"$1|$2|$3\"; }\ndf -P -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 { u = $5 + 0; s = (u >= 95 ? \"crit\" : u >= 85 ? \"warn\" : \"ok\"); print s \"|disk \" $6 \"|used \" u \"%\" }'\ndf -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 && $5 != \"-\" { u = $5 + 0; if (u >= 85) print (u >= 95 ? \"crit\" : \"warn\") \"|inode \" $6 \"|used \" u \"% inode\" }'\n# read-only: only when the device has no rw mount (a bind-ro mount such as /nix/store is normal)\nawk '$3 ~ /^(ext[234]|xfs|btrfs|f2fs)$/ { if ($4 ~ /^rw/) rw[$1] = 1; else if ($4 ~ /^ro(,|$)/) ro[$1] = $2 }\n  END { for (d in ro) if (!(d in rw)) print \"crit|FS \" ro[d] \"|mounted read-only (often a disk error)\" }' /proc/mounts\nawk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } /^SwapTotal/ { st = $2 } /^SwapFree/ { sf = $2 }\n  END { p = 100 - a * 100 / t; printf \"%s|memory|used %d%%\\n\", (p >= 95 ? \"crit\" : p >= 85 ? \"warn\" : \"ok\"), p\n        if (st > 0) { q = 100 - sf * 100 / st; printf \"%s|swap|used %d%%\\n\", (q >= 80 ? \"warn\" : \"ok\"), q } }' /proc/meminfo\nn=$(nproc 2>/dev/null || echo 1); read l1 l5 rest < /proc/loadavg\nawk -v l=\"$l5\" -v n=\"$n\" 'BEGIN { printf \"%s|load|%s in 5 min on %d cores\\n\", (l >= 2 * n ? \"crit\" : l >= n ? \"warn\" : \"ok\"), l, n }'\nif command -v timedatectl >/dev/null 2>&1; then\n  [ \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes ] && o ok time \"synchronized (NTP)\" || o warn time \"not synchronized with NTP: logs, TLS and 2FA will drift\"\nfi\nif [ \"$FULL\" = 1 ]; then\n  S=\"\"; [ \"$(id -u)\" = 0 ] || { sudo -n true 2>/dev/null && S=\"sudo -n\"; }\n  oom=$($S journalctl -k --since -7d -q --no-pager 2>/dev/null | grep -ci \"out of memory\")\n  [ \"${oom:-0}\" -gt 0 ] && o crit OOM \"processes killed for lack of memory in 7 days: $oom\" || o ok OOM \"none in 7 days\"\n  t=$($S journalctl -p err --since today -q --no-pager 2>/dev/null | wc -l)\n  w=$($S journalctl -p err --since -7d --until today -q --no-pager 2>/dev/null | wc -l); avg=$((w / 6))\n  [ \"$t\" -gt $((avg * 2 + 10)) ] && o warn \"error growth\" \"today $t, usually ~$avg per day\" || o ok \"journal errors\" \"today $t, usually ~$avg per day\"\n  if command -v openssl >/dev/null 2>&1; then\n    for c in $($S sh -c 'ls /etc/letsencrypt/live/*/cert.pem' 2>/dev/null); do\n      e=$($S openssl x509 -enddate -noout -in \"$c\" 2>/dev/null | cut -d= -f2); [ -n \"$e\" ] || continue\n      x=$(date -d \"$e\" +%s 2>/dev/null); [ -n \"$x\" ] || continue; d=$(( (x - $(date +%s)) / 86400 ))\n      o \"$([ $d -lt 3 ] && echo crit || { [ $d -lt 14 ] && echo warn || echo ok; })\" \"SSL $(basename \"$(dirname \"$c\")\")\" \"expires in $d days\"\n    done\n  fi\n  u=\"\"\n  if command -v apt >/dev/null 2>&1; then u=$(apt list --upgradable 2>/dev/null | grep -ci -- \"-security\")\n  elif command -v dnf >/dev/null 2>&1; then u=$(dnf -q updateinfo list --security 2>/dev/null | wc -l)\n  elif command -v checkupdates >/dev/null 2>&1; then u=$(checkupdates 2>/dev/null | wc -l); fi\n  [ -n \"$u\" ] && { [ \"$u\" -gt 0 ] && o warn \"security updates\" \"available: $u\" || o ok \"security updates\" \"none\"; }\nfi\necho \"==END==\"",
+    "S=\"\"; [ \"$(id -u)\" = 0 ] || S=sudo; command -v auditctl >/dev/null 2>&1 || { echo \"auditd не установлен. Установите: apt install auditd | dnf install audit | pacman -S audit\"; exit 3; }; ": "S=\"\"; [ \"$(id -u)\" = 0 ] || S=sudo; command -v auditctl >/dev/null 2>&1 || { echo \"auditd is not installed. Install: apt install auditd | dnf install audit | pacman -S audit\"; exit 3; }; ",
+    "Enter — продолжить": "Enter — continue",
+    "set -e; command -v apt-get >/dev/null || {{ echo \"Нужна Ubuntu / Debian (apt)\"; exit 5; }}; grep -qsi \"^Include /etc/ssh/sshd_config.d/\" /etc/ssh/sshd_config || {{ echo \"В sshd_config нет Include sshd_config.d\"; exit 6; }}; apt-get update -qq || true; if ! id {p0} >/dev/null 2>&1; then adduser --disabled-password --gecos \"\" {p1}; echo \"Придумайте пароль для sudo пользователя {p2}:\"; passwd {p3}; fi; usermod -aG sudo {p4}; su - {p5} -s /bin/sh -c {p6}; for c in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do if [ -f \"$c\" ] && [ \"$c\" != {p7} ] && grep -qi \"^[[:space:]]*port[[:space:]]\" \"$c\"; then sed -i.ssh-storage.bak \"s/^[[:space:]]*[Pp]ort[[:space:]]/#&/\" \"$c\"; fi; done; printf \"Port {p8}\nPort {p9}\n\" > {p10}; sshd -t || {{ rm -f {p11}; for c in /etc/ssh/sshd_config.ssh-storage.bak /etc/ssh/sshd_config.d/*.ssh-storage.bak; do if [ -f \"$c\" ]; then mv \"$c\" \"${{c%.ssh-storage.bak}}\"; fi; done; exit 7; }}; if command -v ufw >/dev/null && ufw status | grep -q \"Status: active\"; then ufw allow {p12}/tcp; fi; {p13}": "set -e; command -v apt-get >/dev/null || {{ echo \"Ubuntu / Debian (apt) required\"; exit 5; }}; grep -qsi \"^Include /etc/ssh/sshd_config.d/\" /etc/ssh/sshd_config || {{ echo \"sshd_config has no Include for sshd_config.d\"; exit 6; }}; apt-get update -qq || true; if ! id {p0} >/dev/null 2>&1; then adduser --disabled-password --gecos \"\" {p1}; echo \"Choose a password for sudo user {p2}:\"; passwd {p3}; fi; usermod -aG sudo {p4}; su - {p5} -s /bin/sh -c {p6}; for c in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do if [ -f \"$c\" ] && [ \"$c\" != {p7} ] && grep -qi \"^[[:space:]]*port[[:space:]]\" \"$c\"; then sed -i.ssh-storage.bak \"s/^[[:space:]]*[Pp]ort[[:space:]]/#&/\" \"$c\"; fi; done; printf \"Port {p8}\nPort {p9}\n\" > {p10}; sshd -t || {{ rm -f {p11}; for c in /etc/ssh/sshd_config.ssh-storage.bak /etc/ssh/sshd_config.d/*.ssh-storage.bak; do if [ -f \"$c\" ]; then mv \"$c\" \"${{c%.ssh-storage.bak}}\"; fi; done; exit 7; }}; if command -v ufw >/dev/null && ufw status | grep -q \"Status: active\"; then ufw allow {p12}/tcp; fi; {p13}",
+    "echo \"==ATTACKS==\"\nprintf '%s\\n' \"$A\" | awk '\nfunction add(ip, u, inv) { c[ip]++; if (inv) bad[ip] = 1; if (index(\" \" us[ip] \" \", \" \" u \" \") == 0) us[ip] = us[ip] \" \" u\n  last[ip] = ts; uc[u]++; ul[u] = ts }\n{ ts = ($1 ~ /^[0-9]/) ? $1 : $1 \"_\" $2 \"_\" $3; pid = match($0, /\\[[0-9]+\\]:/) ? substr($0, RSTART, RLENGTH) : \"\" }  # journal (ISO) или auth.log («Oct 23 10:00:00»)\n/Invalid user [^ ]+ from / { match($0, /Invalid user [^ ]+ from [^ ]+/); split(substr($0, RSTART, RLENGTH), w, \" \")\n  add(w[5], w[3], 1); next }\n/(Connection closed by|Disconnected from) authenticating user [^ ]+ [^ ]+/ { if (pid != \"\" && pid in fl) next\n  match($0, /authenticating user [^ ]+ [^ ]+/); split(substr($0, RSTART, RLENGTH), w, \" \"); add(w[4], w[3], 0); next }\n/Failed (password|publickey|keyboard-interactive)/ && !/invalid user/ {\n  if (match($0, /for [^ ]+ from [^ ]+/)) { split(substr($0, RSTART, RLENGTH), w, \" \"); add(w[4], w[2], 0); fl[pid] = 1 } }\nEND { for (ip in c) if (c[ip] >= 5 || bad[ip]) print \"IP\", c[ip], ip, (bad[ip] ? \"invalid\" : \"-\"), last[ip], us[ip]\n      for (u in uc) print \"USER\", uc[u], u, ul[u] }' | sort -k1,1 -k2,2nr | awk -v N=$N '{ if (++n[$1] <= N) print }'\necho \"==END==\"": "echo \"==ATTACKS==\"\nprintf '%s\\n' \"$A\" | awk '\nfunction add(ip, u, inv) { c[ip]++; if (inv) bad[ip] = 1; if (index(\" \" us[ip] \" \", \" \" u \" \") == 0) us[ip] = us[ip] \" \" u\n  last[ip] = ts; uc[u]++; ul[u] = ts }\n{ ts = ($1 ~ /^[0-9]/) ? $1 : $1 \"_\" $2 \"_\" $3; pid = match($0, /\\[[0-9]+\\]:/) ? substr($0, RSTART, RLENGTH) : \"\" }  # journal (ISO) or auth.log (\"Oct 23 10:00:00\")\n/Invalid user [^ ]+ from / { match($0, /Invalid user [^ ]+ from [^ ]+/); split(substr($0, RSTART, RLENGTH), w, \" \")\n  add(w[5], w[3], 1); next }\n/(Connection closed by|Disconnected from) authenticating user [^ ]+ [^ ]+/ { if (pid != \"\" && pid in fl) next\n  match($0, /authenticating user [^ ]+ [^ ]+/); split(substr($0, RSTART, RLENGTH), w, \" \"); add(w[4], w[3], 0); next }\n/Failed (password|publickey|keyboard-interactive)/ && !/invalid user/ {\n  if (match($0, /for [^ ]+ from [^ ]+/)) { split(substr($0, RSTART, RLENGTH), w, \" \"); add(w[4], w[2], 0); fl[pid] = 1 } }\nEND { for (ip in c) if (c[ip] >= 5 || bad[ip]) print \"IP\", c[ip], ip, (bad[ip] ? \"invalid\" : \"-\"), last[ip], us[ip]\n      for (u in uc) print \"USER\", uc[u], u, ul[u] }' | sort -k1,1 -k2,2nr | awk -v N=$N '{ if (++n[$1] <= N) print }'\necho \"==END==\"",
+    "диск /": "disk /",
+    "память": "memory",
+    "нагрузка": "load",
+    "$S sh -c 'set -e\nB=/var/lib/ssh-storage; mkdir -p $B\n[ -f $B/auditd.prev ] || { systemctl is-active auditd >/dev/null 2>&1 && echo active || echo inactive; } > $B/auditd.prev\ntar czf $B/audit-backup-$(date +%Y%m%d%H%M%S).tgz -C /etc audit\necho \"копия настроек: $(ls -t $B/audit-backup-*.tgz | head -n 1)\"\nprintf \"%s\\n\" \"-a always,exit -F arch=b64 -S execve -F auid!=4294967295 -k ssh-storage\" \"-a always,exit -F arch=b32 -S execve -F auid!=4294967295 -k ssh-storage\" > /etc/audit/rules.d/ssh-storage.rules\nsystemctl enable --now auditd\naugenrules --load >/dev/null 2>&1 || auditctl -R /etc/audit/rules.d/ssh-storage.rules >/dev/null\nauditctl -l | grep -q ssh-storage\necho \"✓ запись команд включена\"'": "$S sh -c 'set -e\nB=/var/lib/ssh-storage; mkdir -p $B\n[ -f $B/auditd.prev ] || { systemctl is-active auditd >/dev/null 2>&1 && echo active || echo inactive; } > $B/auditd.prev\ntar czf $B/audit-backup-$(date +%Y%m%d%H%M%S).tgz -C /etc audit\necho \"settings backup: $(ls -t $B/audit-backup-*.tgz | head -n 1)\"\nprintf \"%s\\n\" \"-a always,exit -F arch=b64 -S execve -F auid!=4294967295 -k ssh-storage\" \"-a always,exit -F arch=b32 -S execve -F auid!=4294967295 -k ssh-storage\" > /etc/audit/rules.d/ssh-storage.rules\nsystemctl enable --now auditd\naugenrules --load >/dev/null 2>&1 || auditctl -R /etc/audit/rules.d/ssh-storage.rules >/dev/null\nauditctl -l | grep -q ssh-storage\necho \"command logging enabled\"'",
+    "$S sh -c 'B=/var/lib/ssh-storage\nrm -f /etc/audit/rules.d/ssh-storage.rules\nauditctl -D -k ssh-storage >/dev/null 2>&1; augenrules --load >/dev/null 2>&1\nif [ \"$(cat $B/auditd.prev 2>/dev/null)\" = inactive ]; then\n  systemctl disable --now auditd 2>/dev/null || { systemctl disable auditd; service auditd stop; }\n  echo \"auditd остановлен (был выключен до ssh-storage)\"\nfi\nrm -f $B/auditd.prev\n! auditctl -l 2>/dev/null | grep -q ssh-storage && echo \"✓ запись команд выключена, правила ssh-storage сняты\"'": "$S sh -c 'B=/var/lib/ssh-storage\nrm -f /etc/audit/rules.d/ssh-storage.rules\nauditctl -D -k ssh-storage >/dev/null 2>&1; augenrules --load >/dev/null 2>&1\nif [ \"$(cat $B/auditd.prev 2>/dev/null)\" = inactive ]; then\n  systemctl disable --now auditd 2>/dev/null || { systemctl disable auditd; service auditd stop; }\n  echo \"auditd stopped (was disabled before ssh-storage)\"\nfi\nrm -f $B/auditd.prev\n! auditctl -l 2>/dev/null | grep -q ssh-storage && echo \"command logging disabled, ssh-storage rules removed\"'",
+    "любые права": "any privileges",
+    "доступ к журналам (группа adm или systemd-journal) или sudo": "log access (adm or systemd-journal group) or sudo",
+    "root или sudo": "root or sudo",
+    "СТЕРЕТЬ": "ERASE",
+    "администратор — sudo и журналы": "administrator — sudo and logs",
+    "оператор — журналы и sudo systemctl restart/reload": "operator — logs and sudo systemctl restart/reload",
+    "наблюдатель — журналы, без sudo": "observer — logs, no sudo",
+    "Language / Язык": "Language / Язык",
+    "\n  Пик:     {p0}  {p1}": "\n  Peak:    {p0}  {p1}",
+    "  Среднее: {p0}{p1}": "  Average: {p0}{p1}",
+    "  Минимум: {p0}{p1}": "  Minimum: {p0}{p1}",
+    "sudo без пароля": "passwordless sudo",
+    "sudo с паролем": "sudo with password",
+    "доступ к журналам": "log access",
+    "обычный пользователь": "regular user",
+    "стереть данные": "erase data",
+    "установка на телефон": "phone installation",
+    "\n  Код проверки:  {p0}\n": "\n  Verification code:  {p0}\n",
+    "Если на телефоне тот же код — нажмите там Enter.": "If the phone shows the same code, press Enter there.",
+    "id -nG \"$L\" | grep -Eq \"(^| )ssh-storage-{p0}( |$)\" || {{ echo \"✗ не удалось выдать роль\"; exit 1; }}; [ $new = 1 ] && w=создан || w=обновлён; echo \"✓ $w $L ($N): ключ на месте, группы: $(id -nG \"$L\")\"": "id -nG \"$L\" | grep -Eq \"(^| )ssh-storage-{p0}( |$)\" || {{ echo \"failed to assign role\"; exit 1; }}; [ $new = 1 ] && w=created || w=updated; echo \"$w $L ($N): key installed, groups: $(id -nG \"$L\")\"",
+    "echo \"✓ $L: ключи сняты, вход заблокирован, сеансы закрыты, sudo снят\"; elif [ $t = 1 ]; then echo \"✓ у $L снят только ключ\"; else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3": "echo \"$L: keys removed, login blocked, sessions closed, sudo revoked\"; elif [ $t = 1 ]; then echo \"only the key was removed for $L\"; else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3",
+    "echo \"✓ у $L снят только ключ (не участник — не удаляю)\"; else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3": "echo \"only the key was removed for $L (not a member — account left intact)\"; else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3",
+    "история": "history",
+    "обрезанная SSH-строка": "truncated SSH string",
+    "не DER": "not DER",
+    "  Точек: {p0} из ~{p1} (пустые места — сервер был выключен или сборщика ещё не было).": "  Samples: {p0} of ~{p1} (gaps mean the server was off or the collector was not yet installed).",
+    " && echo '✓ перезапущено'": " && echo 'restarted'",
+    "недопустимый сигнал или PID": "invalid signal or PID",
+    "— {p0} {p1}: процесс уже завершён или сменился": "— {p0} {p1}: process has already exited or changed",
+    "  {p0} {p1}  {p2}  {p3}  логины: {p4}": "  {p0} {p1}  {p2}  {p3}  usernames: {p4}",
+    "  {p0} {p1} попыт.  {p2}": "  {p0} {p1} attempts  {p2}",
+    "слишком большое сообщение": "message too large",
+    "ожидался объект сообщения": "expected a message object",
+    "Название": "Name",
+    "IP / хост": "IP / host",
+    "Пользователь": "User",
+    "Имя (латиница, цифры, _ -; видно в подписи ключа на сервере)": "Name (Latin letters, digits, _ -; shown in the key comment on the server)",
+    "Новое имя": "New name",
+    "Имя (латиница, цифры, _ -)": "Name (Latin letters, digits, _ -)",
+    " (ключа телефона там ещё нет)?": " (the phone's key is not there yet)?",
+    "Пароль сервера": "Server password",
+    "SSH-ключ: путь к файлу или вставить текст ключа": "SSH key: file path or pasted key text",
+    "Автоматически (ключи из ~/.ssh и агента)": "Automatic (keys from ~/.ssh and the agent)",
+    "Отмена": "Cancel",
+    "Путь к закрытому ключу (например ~/.ssh/id_ed25519) или вставьте ключ целиком,": "Enter the private key path (e.g. ~/.ssh/id_ed25519) or paste the entire key,",
+    "начиная со строки -----BEGIN … PRIVATE KEY----- (текст ключа на экране не показывается).": "starting with -----BEGIN … PRIVATE KEY----- (the key text is hidden).",
+    "хост не найден (ошибка в имени или DNS)": "host not found (incorrect name or DNS error)",
+    "порт закрыт (SSH не запущен или другой порт)": "port closed (SSH not running or using another port)",
+    "нет ответа (сервер выключен, файрвол или другая сеть)": "no response (server off, firewall, or different network)",
+    "нет связи: {p0}": "cannot connect: {p0}",
+    "Проверяю {p0}:{p1}…": "Checking {p0}:{p1}…",
+    "Всё равно продолжить?": "Continue anyway?",
+    "сопряжение": "pairing",
+    "  Компьютер: {p0}  {p1}\n": "  Computer: {p0}  {p1}\n",
+    "  Введите на компьютере код:  {p0}\n": "  Enter this code on the computer:  {p0}\n",
+    "   Код сеанса:  {p0}": "   Session code:  {p0}",
+    "отозвать участника": "revoke member access",
+    "Ник участника (или номер)": "Member nickname (or number)",
+    "Где отозвать": "Where to revoke access",
+    "телефон": "phone",
+    "отзыв {p0}": "revoking access: {p0}",
+    "итог отзыва · {p0}": "revocation summary · {p0}",
+    "установка на сервер": "server installation",
+    "Выполните на сервере {p0} (консоль хостинга или текущий вход):\n": "Run on server {p0} (via the hosting console or an existing session):\n",
+    "Стереть серверы и сопряжение (ключ SSH остаётся — серверы будут пускать телефон)": "Erase servers and pairing (keep SSH key — servers will still accept this phone)",
+    "Стереть всё: и ключ SSH, и приложение": "Erase everything: SSH key and app too",
+    "Назад": "Back",
+    " из F-Droid.": " from F-Droid.",
+    "Или наведите камеру телефона на QR, скопируйте текст и вставьте в Termux:\n": "Or scan the QR code with your phone's camera, copy the text and paste it into Termux:\n",
+    "Когда телефон ждёт — Enter: ": "When the phone is waiting, press Enter: ",
+    "Если код другой — НЕ нажимайте, закройте Termux: файл подменили.": "If the code differs, do NOT press Enter. Close Termux: the file has been tampered with.",
+    "недопустимый ключ или ник": "invalid key or nickname",
+    "Это компьютер участника команды (резервный пароль хранит админ)?": "Is this a team member's computer (the admin keeps the recovery password)?",
+    "резервный пароль": "recovery password",
+    "Это единственный способ вернуть доступ, если телефон потеряется или сломается.": "This is the only way to regain access if the phone is lost or breaks.",
+    "Запишите его на бумагу и храните отдельно. Он больше нигде не сохраняется.\n": "Write it on paper and keep it separately. It is not saved anywhere else.\n",
+    "сопряжение с телефоном": "pair with phone",
+    "подключение": "connection",
+    "вход на сервер": "server login",
+    "серверы": "servers",
+    "изменить список серверов": "edit server list",
+    "История (входы, sudo-команды, пакеты, изменения /etc)": "History (logins, sudo commands, packages, /etc changes)",
+    "Запись команд auditd (включить / история / выключить)": "auditd command logging (enable / history / disable)",
+    "Попытки взлома (неверные входы, несуществующие логины, частые IP)": "Break-in attempts (failed logins, unknown users, frequent IPs)",
+    "Диагностика (упавшие сервисы, ошибки журнала, процессы)": "Diagnostics (failed services, journal errors, processes)",
+    "Проверка на зачатки неисправностей (быстрая / полная)": "Check for early warning signs (quick / full)",
+    "Перезагрузить сервер": "Reboot server",
+    "Создать пользователя для участника (командный режим)": "Create a user for a member (team mode)",
+    "Проверка процессов (подмена системных, новые программы, скрытые процессы)": "Process check (system process impersonation, new programs, hidden processes)",
+    "Туннель к веб-панели (3x-ui и др.) — панель не торчит в интернет": "Tunnel to web panel (3x-ui, etc.) — keep the panel off the public internet",
+    "действия на сервере": "server actions",
+    "За сколько дней": "Number of days",
+    "{p0} {p1} (только чтение)": "{p0} {p1} (read-only)",
+    "проверка {p0} (только чтение)": "check {p0} (read-only)",
+    "на (\\d+) ядер": "on (\\d+) cores",
+    "диагностика {p0} (только чтение)": "diagnostics {p0} (read-only)",
+    "диагностика · {p0}": "diagnostics · {p0}",
+    "Логин на сервере (a-z, 0-9, _ -)": "Server username (a-z, 0-9, _ -)",
+    "Ник участника (для метки ключа)": "Member nickname (for the key label)",
+    "новый пользователь · {p0}": "new user · {p0}",
+    "создать пользователя {p0} ({p1})": "create user {p0} ({p1})",
+    "проверка процессов {p0} (только чтение)": "process check {p0} (read-only)",
+    "проверка процессов · {p0}": "process check · {p0}",
+    "опасное действие": "dangerous action",
+    "журнал одобрений": "approval log",
+    "просмотр журнала одобрений": "view approval log",
+    "туннель к панели {p0}:{p1}": "tunnel to panel {p0}:{p1}",
+    "права не проверены": "permissions not checked",
+    "новый VPS: настроить с нуля": "new VPS: set up from scratch",
+    "Логин от хостера": "Username from the provider",
+    "Новый пользователь": "New user",
+    "новый VPS {p0}": "new VPS {p0}",
+    "новый сервер": "new server",
+    "\nДругие ключи в ~/.ssh/authorized_keys на сервере — те, которыми вы входили раньше": "\nOther keys in ~/.ssh/authorized_keys on the server — keys you used before",
+    "массовое добавление": "bulk add",
+    "\nСпособ первого входа:": "\nInitial login method:",
+    "участник → серверы": "member → servers",
+    "добавить участника {p0} ({p1}) на серверы ({p2})": "add member {p0} ({p1}) to servers ({p2})",
+    "участник {p0} ({p1}): добавлен на {p2}, не добавлен на {p3}": "member {p0} ({p1}): added to {p2}, not added to {p3}",
+    "итог": "results",
+    "Ник участника": "Member nickname",
+    "Где": "Where",
+    "{p0} участника {p1} на серверах ({p2})": "{p0} member {p1} on servers ({p2})",
+    "массовое удаление": "bulk removal",
+    "итог массового удаления": "bulk removal results",
+    "перевыпуск ключей": "key rotation",
+    "перевыпуск ключей — сводка": "key rotation — summary",
+    "  Перевыпустить: {p0}": "  Rotate: {p0}",
+    "  Режим: {p0}": "  Mode: {p0}",
+    "  Серверы ({p0}):": "  Servers ({p0}):",
+    "перевыпуск ключей на всех серверах": "rotate keys on all servers",
+    "итог перевыпуска": "rotation results",
+    "восстановление": "recovery",
+    "Вход резервным ключом из 20-символьного пароля.\n": "Log in with a backup key derived from a 20-character password.\n",
+    "перенос старых подключений": "migrate old connections",
+    ": сопряжение и список серверов.": ": pairing and server list.",
+    "Удалится закрытый ключ сопряжения; SSH-ключ остаётся на телефоне, резервный пароль — на бумаге.": "The private pairing key will be deleted; the SSH key stays on the phone, and the backup password stays on paper.",
+    "Резервный пароль после этого здесь не будет известен: при новом сопряжении создастся новый.": "The backup password will no longer be available here: pairing again will create a new one.",
+    "✓ Стёрто.": "Erased.",
+    "главное меню": "main menu",
+    "выдаёт себя за поток ядра (у настоящих нет файла программы)": "posing as a kernel thread (real ones have no executable file)",
+    "файл программы из пакета изменён — не совпадает с контрольной суммой пакета": "package executable modified — does not match the package checksum",
+    "файл программы удалён после запуска (после обновления — норма до перезапуска)": "executable deleted after launch (normal after an update until restarted)",
+    "запущена из временной / домашней папки": "running from a temporary / home directory",
+    "имя «{p0}» не совпадает с файлом программы «{p1}» и программа не из пакета": "name “{p0}” differs from executable “{p1}” and the program is not from a package",
+    "  Нет данных за этот период.": "  No data for this period.",
+    "  Нагрузка — средняя за 5 мин; {p0} ядер = загрузка 100%.": "  Load is the 5-minute average; {p0} cores = 100% load.",
+    "  ⚠ Нет доступа к журналам (нужны группа adm / systemd-journal или sudo без пароля) — данные могут быть неполными.\n": "  No log access (requires the adm / systemd-journal group or passwordless sudo) — data may be incomplete.\n",
+    "Источники атак": "Attack sources",
+    "  (IP — только при ≥5 неудачных входах или входе под несуществующим логином)": "  (IP shown only for ≥5 failed logins or an attempt with a nonexistent username)",
+    "несуществующий логин": "nonexistent username",
+    "≥5 неудач": "≥5 failures",
+    "  (без IP)": "  (no IP)",
+    "Входы": "Logins",
+    "  (кто, когда, чем; без IP)": "  (who, when, how; no IP)",
+    "sudo-команды": "sudo commands",
+    "Смены пользователя (su)": "User switches (su)",
+    "Пакеты": "Packages",
+    "Изменённые файлы /etc": "Modified /etc files",
+    "Ищу телефон в сети…": "Looking for the phone on the network…",
+    "Телефон не найден (та же сеть Wi-Fi? в кафе устройства бывают изолированы).": "Phone not found (same Wi-Fi network? Public Wi-Fi may isolate devices).",
+    "Порт": "Port",
+    "Оставить «{p0}»": "Keep “{p0}”",
+    "Последнее: «{p0}»": "Last: “{p0}”",
+    "строка {p0}: «{p1}»": "line {p0}: “{p1}”",
+    "нет файла {p0}": "file not found: {p0}",
+    "\nКак зайти на сервер ": "\nHow should we log in to the server ",
+    "✗ Файл не найден (или вставьте ключ, начиная со строки -----BEGIN)": "File not found (or paste a key starting with -----BEGIN)",
+    "не нашёл SSH-сервер на этом порту": "no SSH server found on this port",
+    "✓ SSH отвечает": "SSH responds",
+    "  [ключи не установлены]": "  [keys not installed]",
+    "Keystore не создал ключ": "Keystore failed to create a key",
+    "Keystore не подписал": "Keystore failed to sign",
+    "нарушен протокол — возможна атака": "protocol violation — possible attack",
+    "Компьютер написал «✓ Код верный»?": "Did the computer show “Code correct”?",
+    "\n✓ Сопряжено с «{p0}»": "\nPaired with “{p0}”",
+    "   Разрешайте, только если на компьютере тот же код.": "   Approve only if the computer shows the same code.",
+    "Код совпадает, разрешить?": "Does the code match? Allow?",
+    "\nУчастник {p0}: ключи снять, вход заблокировать, сеансы закрыть на: {p1}. Полное удаление — с компьютера.": "\nMember {p0}: remove keys, block login and close sessions on: {p1}. Use the computer to delete the account entirely.",
+    "Проще: на компьютере ssh-storage → «Серверы» → «Добавить сервер» сделает это сам.": "Easier: on the computer, ssh-storage → “Servers” → “Add server” does this automatically.",
+    "✓ Установлено. Дальше на телефоне команда ": "Installed. Next, on the phone run ",
+    "Нет termux-keystore.": "termux-keystore is missing.",
+    "Ожидать запросы компьютера": "Wait for computer requests",
+    "Серверы": "Servers",
+    "Сопряжение": "Pairing",
+    "Специальные возможности": "Advanced options",
+    "Выход": "Exit",
+    "ожидание": "waiting",
+    "  Журнал пуст.": "  Log is empty.",
+    "  …показаны последние 50 из {p0}": "  …showing the latest 50 of {p0}",
+    "\nУдалится список серверов и сопряжение. Потом — новое сопряжение с компьютером.": "\nThe server list and pairing will be erased. You will need to pair with a computer again.",
+    "✓ Стёрто. Запустите ssh-storage заново.": "Erased. Restart ssh-storage.",
+    "  Вернуть доступ можно только резервным паролем (на компьютере → «Специальные возможности» → «Восстановление»).": "  Access can only be restored with the recovery password (on the computer → “Advanced options” → “Recovery”).",
+    "✓ Всё стёрто: ключ, данные и приложение.": "Everything erased: key, data and app.",
+    "Нужно: Termux и ": "Required: Termux and ",
+    "В Termux выполните ": "In Termux, run ",
+    "Ищу устройства…": "Searching for devices…",
+    "Только номера от 1 до {p0}.": "Only numbers from 1 to {p0}.",
+    "case \"$(pw)\" in \"\"|\"!\"*|\"*\"*) echo \"Временный пароль sudo для $L:\"; passwd \"$L\" || exit 1; if passwd -e \"$L\" >/dev/null 2>&1 || chage -d 0 \"$L\" 2>/dev/null; then echo \"  $L сменит его при первом входе\"; else echo \"  ⚠ сервер не умеет просить смену — попросите $L выполнить passwd\"; fi;; esac; SG=$(getent group sudo >/dev/null && echo sudo || echo wheel); grp $SG; join $SG; sudo -l -U \"$L\" 2>/dev/null | grep -q \"may run\" || echo \"  ⚠ sudo для $L не работает: в /etc/sudoers не разрешена группа $SG (visudo)\"; ": "case \"$(pw)\" in \"\"|\"!\"*|\"*\"*) echo \"Temporary sudo password for $L:\"; passwd \"$L\" || exit 1; if passwd -e \"$L\" >/dev/null 2>&1 || chage -d 0 \"$L\" 2>/dev/null; then echo \"  $L will change it on first login\"; else echo \"  server cannot require a password change — ask $L to run passwd\"; fi;; esac; SG=$(getent group sudo >/dev/null && echo sudo || echo wheel); grp $SG; join $SG; sudo -l -U \"$L\" 2>/dev/null | grep -q \"may run\" || echo \"  sudo does not work for $L: group $SG is not allowed in /etc/sudoers (visudo)\"; ",
+    "n=0; for L in $(getent passwd | cut -d: -f1); do home; m=0; ours && mine && m=1; if [ $m = 1 ]; then pkill -KILL -u \"$L\" 2>/dev/null; sleep 1; userdel -r \"$L\" 2>/dev/null; if id \"$L\" >/dev/null 2>&1; then deluser --remove-home \"$L\" || exit 1; fi; rm -f \"$R/$L\" \"$R/$L.locked\"; echo \"✓ удалён пользователь $L и его папка\"; elif grep -q \"$T\" \"$f\" 2>/dev/null; then ": "n=0; for L in $(getent passwd | cut -d: -f1); do home; m=0; ours && mine && m=1; if [ $m = 1 ]; then pkill -KILL -u \"$L\" 2>/dev/null; sleep 1; userdel -r \"$L\" 2>/dev/null; if id \"$L\" >/dev/null 2>&1; then deluser --remove-home \"$L\" || exit 1; fi; rm -f \"$R/$L\" \"$R/$L.locked\"; echo \"user $L and their home directory deleted\"; elif grep -q \"$T\" \"$f\" 2>/dev/null; then ",
+    "На телефоне: ssh-storage → «Ожидать запросы компьютера».": "On the phone: ssh-storage → “Wait for computer requests”.",
+    "\n  Код сеанса:  {p0}": "\n  Session code:  {p0}",
+    "Обновляю программу на телефоне ({p0} → {p1})…": "Updating the app on the phone ({p0} → {p1})…",
+    "«Да» — только если админ команды сам выдал вам доступ. Иначе ответьте «нет».": "Answer “yes” only if the team admin personally granted you access. Otherwise, answer “no”.",
+    "Вычисляю резервный ключ…": "Deriving recovery key…",
+    "На телефоне: ssh-storage → «Начать сопряжение».\n": "On the phone: ssh-storage → “Start pairing”.\n",
+    "Enter — искать телефон: ": "Press Enter to search for the phone: ",
+    "  Телефон: {p0}\n": "  Phone: {p0}\n",
+    "Дальше: «Серверы» → «Добавить сервер» — ключ телефона пропишется на сервер.": "Next: “Servers” → “Add server” to install the phone's key on the server.",
+    "Добавить участника на серверы": "Add a member to servers",
+    "Отозвать или удалить участника": "Revoke access or remove a member",
+    "действия · {p0}": "actions · {p0}",
+    "  {p0} · права: {p1}\n": "  {p0} · permissions: {p1}\n",
+    "Проверить права на сервере": "Check server permissions",
+    "{p0} · {p1} · {p2} дн.": "{p0} · {p1} · {p2} days",
+    "запись команд · {p0}": "command logging · {p0}",
+    "проверка · {p0} · {p1}": "check · {p0} · {p1}",
+    "Упавшие сервисы": "Failed services",
+    "Перезапустить сервисы (номера)": "Restart services (numbers)",
+    "Остановить процессы — SIGTERM (номера)": "Stop processes — SIGTERM (numbers)",
+    "Убить процессы принудительно — SIGKILL (номера)": "Force-kill processes — SIGKILL (numbers)",
+    "перезапустить": "restart",
+    "остановить (SIGTERM)": "stop (SIGTERM)",
+    "убить (SIGKILL)": "kill (SIGKILL)",
+    "\nБудет {p0}:": "\nAction: {p0}:",
+    "специальные возможности": "advanced options",
+    "  У каждого участника свой Unix-пользователь и свой ключ — в журналах видно, кто что делал.\n": "  Each member has their own Unix user and key — logs show who did what.\n",
+    "  Роль задаёт права. Администратору sudo нужен только если он ставит пакеты и правит системные файлы.": "  The role defines permissions. An admin needs sudo only to install packages and edit system files.",
+    "\nБудет создан пользователь {p0} на {p1} с ключом участника {p2}.": "\nUser {p0} will be created on {p1} with member {p2}'s key.",
+    "создан пользователь {p0} ({p1})": "user {p0} created ({p1})",
+    "  {p0} {p1} (pid {p2}) скрыт от ps — признак руткита": "  {p0} {p1} (pid {p2}) is hidden from ps — a sign of a rootkit",
+    "Доверять: запомнить текущие программы как нормальные": "Trust: save current programs as the baseline",
+    "перезагрузить сервер": "reboot server",
+    "Жду, пока сервер выключится и снова ответит по SSH… (Ctrl+C — перестать ждать)": "Waiting for the server to shut down and respond over SSH again… (Ctrl+C to stop waiting)",
+    "Захожу на {p0}@{p1}…": "Logging in to {p0}@{p1}…",
+    "✓ «{p0}»: ключ телефона и резервный ключ прописаны": "“{p0}”: phone key and backup key installed",
+    "Порт панели на сервере": "Panel port on server",
+    "Проверяю вход ключом телефона и отключаю старые ключи…": "Checking login with the phone key and disabling old keys…",
+    "Только купил сервер: есть root (или пользователь с sudo) и пароль от хостера": "I just bought a server: I have root (or a sudo user) and a password from the provider",
+    "Мне дали личного пользователя на чужом сервере (без root)": "I was given my own account on someone else's server (no root)",
+    "Порт сейчас": "Current port",
+    "Новый порт SSH": "New SSH port",
+    "Продолжить?": "Continue?",
+    "(ключи с компьютеров, другие ssh-ключи; ключи телефонов, резервный и участников команды не затрагиваются):": "(computer keys and other SSH keys; phone, backup, and team member keys are not affected):",
+    "Оставить — они продолжат работать, просто добавится ключ телефона": "Keep — they will still work; the phone key will simply be added",
+    "Отключить — входить ими станет нельзя. Строки не удаляются: в начало ставится «#»,\n      вернуть можно, убрав «#» или из копии authorized_keys.ssh-storage.bak.\n      Делается только после того, как вход телефоном проверен.": "Disable — they will no longer allow login. Lines are not deleted: '#' is added at the start.\n      Restore them by removing '#' or using authorized_keys.ssh-storage.bak.\n      Done only after phone login has been verified.",
+    "добавить сервер {p0}": "add server {p0}",
+    "Из файла (строки: имя хост [порт] [пользователь])": "From a file (lines: name host [port] [user])",
+    "Из ~/.ssh/config": "From ~/.ssh/config",
+    "Вставить списком": "Paste a list",
+    "Проверяю доступность…": "Checking reachability…",
+    "добавить серверы ({p0})": "add servers ({p0})",
+    "итог массового добавления": "bulk add results",
+    "\nПользователь {p0} (участник {p1}) на серверах: {p2}": "\nUser {p0} (member {p1}) on servers: {p2}",
+    "  Добавлен: {p0}": "  Added to: {p0}",
+    "Только снять ключи — пользователь и его файлы останутся": "Remove keys only — keep the user and their files",
+    "Удалить полностью — пользователя, его папку и ключи (необратимо)": "Delete completely — user, home directory, and keys (irreversible)",
+    "Только из списка (ключи на серверах остаются)": "From the list only (keep keys on servers)",
+    "Из списка + снять ключ телефона и резервный с серверов": "From the list and remove phone and backup keys from servers",
+    "удалить серверы ({p0})": "remove servers ({p0})",
+    "  Удалено: {p0}": "  Removed: {p0}",
+    "Один ключ на устройство: перевыпуск действует сразу на всех серверах из списка.\n": "One key per device: rotation applies to all servers in the list at once.\n",
+    "Ключ телефона": "Phone key",
+    "Резервный ключ (новый резервный пароль)": "Backup key (new backup password)",
+    "Оба": "Both",
+    "Добавить: остальные ключи на серверах не трогать": "Add: leave other keys on servers unchanged",
+    "Затереть: оставить на серверах только ключи ssh-storage этого телефона": "Overwrite: keep only this phone's ssh-storage keys on servers",
+    "  Готово: {p0}": "  Done: {p0}",
+    "Выберите ключ потерянного телефона для отзыва. Ключи других людей не выбирайте.": "Select the lost phone's key to revoke. Do not select other people's keys.",
+    "⚠ Новый телефон проверен, но старые ключи остались действующими": "New phone verified, but old keys are still active",
+    "Пароль администратора старого хранилища: ": "Old storage admin password: ",
+    "Проверяю…": "Checking…",
+    "Удалится ": "Will delete ",
+    "Удалить и старый vault.json?": "Also delete the old vault.json?",
+    "ssh не найден": "ssh not found",
+    "Телефон не сопряжён": "Phone not paired",
+    "Резервный ключ есть": "Recovery key present",
+    "Резервного ключа нет": "No recovery key",
+    "Подключиться к серверу": "Connect to a server",
+    "Действия на сервере": "Server actions",
+    "Выбор [{p0}]: ": "Choice [{p0}]: ",
+    "месяц": "month",
+    "Всё в порядке.": "All OK.",
+    "Требуют внимания: {p0}.": "Need attention: {p0}.",
+    "Неудачные входы по пользователям": "Failed logins by user",
+    "ключ": "key",
+    "пароль": "password",
+    "соединение закрыто": "connection closed",
+    "подделка или чужое устройство — соединение разорвано": "forgery or unknown device — connection closed",
+    "    обязательное поле": "    required field",
+    "    неверное значение": "    invalid value",
+    "Имя (видно в подписи ключа на сервере)": "Name (shown in the key comment on the server)",
+    "в первый раз": "for the first time",
+    "✓ Ключ принят ({p0} строк), будет удалён после входа": "Key accepted ({p0} lines), will be deleted after login",
+    "Создаю ключ в Android Keystore…": "Creating a key in Android Keystore…",
+    "сопряжения": "pairing",
+    "запросы компьютера": "computer requests",
+    "компьютер": "computer",
+    "✗ Сопряжение отменено": "Pairing cancelled",
+    "Запрос от незнакомого компьютера — отклонён.\n": "Request from an unknown computer — rejected.\n",
+    "Запрос от «{p0}»: {p1}": "Request from \"{p0}\": {p1}",
+    "Нет ssh: выполните pkg install openssh": "ssh is missing: run pkg install openssh",
+    "Список серверов пуст.": "Server list is empty.",
+    "Отозвать?": "Revoke access?",
+    "Сначала сопряжение с компьютером (там создаётся резервный пароль).": "Pair with a computer first (the recovery password is created there).",
+    " из F-Droid и выполните: ": " from F-Droid and run: ",
+    "\n⚠ Ключ SSH будет удалён навсегда: НИ ОДИН сервер больше не пустит этот телефон.": "\nThe SSH key will be permanently deleted: NO server will accept this phone anymore.",
+    "(можно переслать себе в мессенджер)": "(you can send it to yourself in a messaging app)",
+    "Устройства не найдены. Искать снова?": "No devices found. Search again?",
+    "устройство": "device",
+    "Телефон не сопряжён: пункт «Сопряжение» → «Сопряжение с телефоном».": "Phone is not paired: select “Pairing” → “Pair with phone”.",
+    "  Подтвердите на телефоне, если там тот же код…": "  Confirm on the phone if it shows the same code…",
+    "✓ Телефон обновлён (перезапустится после сеанса)": "Phone updated (app will restart after the session)",
+    "✗ Обновление на телефоне не прошло проверку": "Update on the phone failed verification",
+    "Введите его для проверки: ": "Enter it to verify: ",
+    "  Не совпадает.": "  Does not match.",
+    "\n✓ Телефон сопряжён": "\nPhone paired",
+    "Список серверов пуст. Добавьте: «Серверы» → «Добавить сервер».": "Server list is empty. Add one: “Servers” → “Add server”.",
+    "Сопряжение с телефоном": "Pair with phone",
+    "Установить / обновить приложение на телефоне": "Install / update the phone app",
+    "проверить права на {p0}": "check permissions on {p0}",
+    "  auditd записывает каждую запущенную команду с исходным пользователем входа —": "  auditd logs every command with the original login user —",
+    "  видно, кто на самом деле работал, даже после sudo -i / su. Нужен root или sudo.\n": "  see who actually ran it, even after sudo -i / su. Requires root or sudo.\n",
+    "Включить запись команд": "Enable command logging",
+    "История команд": "Command history",
+    "Выключить (откат к прежним настройкам)": "Disable (restore previous settings)",
+    "включить запись команд (auditd)": "enable command logging (auditd)",
+    "Быстрая (диск, память, нагрузка, время)": "Quick (disk, memory, load, time)",
+    "Полная (+ OOM, рост ошибок, SSL-сертификаты, обновления безопасности)": "Full (+ OOM, rising error counts, SSL certificates, security updates)",
+    "история · {p0}": "history · {p0}",
+    "✗ Не удалось получить данные": "Could not retrieve data",
+    "  нет": "  none",
+    "  (последние 30, без IP)": "  (last 30, IP addresses omitted)",
+    "нет": "none",
+    "  (PID 1, sshd и свой сеанс не показаны)": "  (PID 1, sshd and your session are omitted)",
+    "Нет подходящих номеров.": "No valid numbers.",
+    "SIGKILL не даёт процессу сохранить данные — только если SIGTERM не помог.": "SIGKILL prevents the process from saving data — use only if SIGTERM did not work.",
+    "Выполнить?": "Proceed?",
+    "Восстановление по резервному паролю": "Recover with backup password",
+    "Журнал одобрений (с телефона)": "Approval log (from phone)",
+    "Стереть все данные": "Erase all data",
+    "✗ Не удалось выполнить проверку (нужен root или sudo)": "Could not run the check (requires root or sudo)",
+    "  Подозрительного не найдено.": "  Nothing suspicious found.",
+    "  (кто слушает входящие подключения)": "  (what is listening for incoming connections)",
+    "\nЭталона ещё нет: если сейчас всё ваше — нажмите «Доверять», и в следующий раз будут видны новые программы.": "\nNo baseline yet: if you recognize everything here, select “Trust” to flag new programs next time.",
+    "✓ Запомнено программ: {p0}": "Programs saved: {p0}",
+    "Перезагрузить {p0}? Все подключения и работающие программы прервутся.": "Reboot {p0}? All connections and running programs will be interrupted.",
+    "✗ Отклонено на телефоне": "Rejected on the phone",
+    "✗ Не удалось прописать ключи. Можно вручную — выполните на сервере:": "Could not install keys. To install them manually, run on the server:",
+    "«{p0}» сохранён с пометкой «ключи не установлены» (#{p1})": "“{p0}” saved with “keys not installed” status (#{p1})",
+    "Откройте в браузере http://127.0.0.1:{p0}/ (путь панели — как обычно). Ctrl+C — закрыть туннель.": "Open http://127.0.0.1:{p0}/ in your browser (use the usual panel path). Ctrl+C to close the tunnel.",
+    "Пока туннель открыт, порт доступен и другим программам на этом компьютере — закройте сразу после работы.": "While the tunnel is open, other programs on this computer can also access the port — close it as soon as you finish.",
+    "Подсказка: в 3x-ui можно оставить панель только на 127.0.0.1 — снаружи её не будет видно.": "Tip: in 3x-ui, bind the panel only to 127.0.0.1 to keep it inaccessible from outside.",
+    "✓ Вход телефоном работает; старые ключи закомментированы (копия: authorized_keys.ssh-storage.bak)": "Phone login works; old keys commented out (backup: authorized_keys.ssh-storage.bak)",
+    "Без root можно только своё: ключ телефона, резервный ключ, TERM в ~/.profile и отключить старые ключи.\nПорт, вход root и пароли сервера настраивает его владелец.": "Without root, you can only manage your phone key, backup key, TERM in ~/.profile, and disable old keys.\nThe server owner manages the port, root login, and server passwords.",
+    "  Если после шага 5 вход ключом не подтвердится за 3 мин — сервер сам вернёт шаг 3.": "  If key login is not confirmed within 3 minutes after step 5, the server automatically reverts to step 3.",
+    "Захожу на {p0}@{p1}:{p2} — пароль от хостера (и sudo) вводите здесь, программа их не хранит…": "Connecting to {p0}@{p1}:{p2} — enter the provider password (and sudo password) here; the app does not store them…",
+    "✓ {p0} создан, ключи прописаны, SSH слушает {p1} и {p2}": "{p0} created, keys installed, SSH listening on {p1} and {p2}",
+    "Шаг 4–5: вход {p0}@{p1}:{p2} ключом телефона (sudo спросит пароль {p3})…": "Steps 4–5: logging in to {p0}@{p1}:{p2} with the phone key (sudo will ask for {p3}'s password)…",
+    "Проверяю вход заново (новое подключение)…": "Testing login again (new connection)…",
+    "Путь к файлу": "File path",
+    "Нечего добавлять.": "Nothing to add.",
+    "Общий для всех серверов": "Same for all servers",
+    "Свой для каждого сервера": "Different for each server",
+    "  Добавлено: {p0}": "  Added: {p0}",
+    "  Не добавлен: {p0} (недоступен, отказ sudo или логин занят)": "  Not added to: {p0} (unreachable, sudo denied, or username taken)",
+    "Добавленные через это меню (можно ввести номер):": "Added through this menu (you can enter a number):",
+    "\nНа {p0} будут удалены пользователи участника {p1} и все их файлы. Вернуть нельзя.": "\nOn {p0}, member {p1}'s user accounts and all their files will be deleted. This cannot be undone.",
+    "Удаляются только созданные через меню участников; ваш пользователь и root — никогда.": "Only accounts created through the members menu are deleted; your account and root are never deleted.",
+    "\nУчастник {p0} на {p1}: ключи снять, вход заблокировать, открытые сеансы закрыть, sudo снять. Пользователь и файлы останутся; вернуть — «Добавить участника».": "\nMember {p0} on {p1}: remove keys, block login, close active sessions, and revoke sudo. The user and files will remain; restore access with 'Add member'.",
+    "⚠ Ключ телефона и резервный будут сняты: войти на эти серверы через ssh-storage станет нельзя.": "Phone and backup keys will be removed: you will no longer be able to log in to these servers through ssh-storage.",
+    "Удалить серверов: {p0}?": "Remove {p0} servers?",
+    " и снять ключи": " and remove keys",
+    "  Не удалено: {p0}": "  Not removed: {p0}",
+    "Резервного ключа у участника команды нет — он у админа.": "Team members do not have a backup key — the admin has it.",
+    "\n⚠ Старый резервный пароль перестанет работать — будет показан новый.": "\nThe old backup password will stop working — a new one will be shown.",
+    "⚠ Чужие ключи на серверах будут удалены (список — после проверки серверов).": "Other people's keys will be deleted from servers (listed after checking servers).",
+    "  С ошибками: {p0}": "  With errors: {p0}",
+    "Резервный пароль (Enter — отмена): ": "Backup password (Enter to cancel): ",
+    "Вычисляю ключ…": "Deriving key…",
+    "✗ Не удалось прочитать ключи резервным ключом — ничего не изменено": "Could not read keys using the backup key — nothing changed",
+    "Отозвать: {p0} ({p1}…)": "Revoke: {p0} ({p1}…)",
+    "Только добавить новый телефон (старые ключи останутся)": "Only add the new phone (keep old keys)",
+    "✗ Новый вход не прошёл проверку — старые ключи НЕ сняты": "New login failed verification — old keys were NOT removed",
+    "\nКогда всё проверите, старое хранилище можно удалить: {p0}": "\nOnce you have checked everything, you can delete the old storage: {p0}",
+    "Телефон: ": "Phone: ",
+    "новая программа (не было при «доверять»)": "new program (not present when marked trusted)",
+    "файл программы изменился с момента «доверять»": "executable changed since being marked trusted",
+    "Путь или ключ (Enter — отмена): ": "Path or key (Enter — cancel): ",
+    "Жду {p0}…  IP: {p1}": "Waiting for {p0}…  IP: {p1}",
+    "Ctrl+C — назад\n": "Ctrl+C — back\n",
+    "   ⚠ ОПАСНОЕ ДЕЙСТВИЕ — подтверждайте, только если запускали его сами.": "   DANGEROUS ACTION — approve only if you initiated it yourself.",
+    "+ Добавить вручную": "+ Add manually",
+    "Установите приложение ": "Install the app ",
+    "отпечаток": "fingerprint",
+    "в защищённом чипе": "in a secure chip",
+    "в Keystore (без отдельного чипа)": "in Keystore (no dedicated chip)",
+    "серверов": "servers",
+    "Сначала сопряжение.": "Pair first.",
+    "\n{p0}: номера через запятую или пробел (Enter — все, 0 — отмена): ": "\n{p0}: numbers separated by commas or spaces (Enter for all, 0 to cancel): ",
+    "✗ Телефон отклонил обновление": "Phone rejected the update",
+    "✗ Не совпадает": "Does not match",
+    "Если вводили правильно — кто-то вмешивается в соединение.": "If you entered it correctly, someone is interfering with the connection.",
+    "На телефоне нет серверов. Добавьте: «Серверы» → «Добавить сервер».": "No servers on the phone. Add one: “Servers” → “Add server”.",
+    "Изменить (название, хост, порт, пользователь, имя)": "Edit (label, host, port, user, name)",
+    "Команда установки для сервера": "Server installation command",
+    "Удалить из списка": "Remove from list",
+    "Обновить ключи на сервере (имя в подписи, резервный ключ)": "Update keys on server (name in key comment, recovery key)",
+    "изменить": "edit",
+    "  (нужно: {p0})": "  (required: {p0})",
+    "✗ Не удалось получить историю": "Could not retrieve history",
+    "Будут записываться команды ВСЕХ пользователей сервера с аргументами (в т.ч. пароль, если его набрать\nпрямо в команде: mysql -pПАРОЛЬ). Читать журнал может любой с sudo. Предупредите участников.": "Commands and arguments from ALL server users will be logged (including passwords entered\ndirectly in a command: mysql -pPASSWORD). Anyone with sudo can read the log. Notify members.",
+    "Включить?": "Enable?",
+    "выключить запись команд (auditd), откат": "disable command logging (auditd), restore settings",
+    "✗ Не удалось выполнить проверку": "Could not run the check",
+    "График: {p0}": "Chart: {p0}",
+    "Последний час": "Last hour",
+    "Сутки": "24 hours",
+    "Месяц": "Month",
+    "Ошибки журнала за сутки": "Journal errors in the last 24 hours",
+    "Процессы с наибольшей нагрузкой": "Top resource-consuming processes",
+    "Перенести старые подключения (vault.json)": "Import old connections (vault.json)",
+    "Открытые порты": "Open ports",
+    "команда перезагрузки отправлена": "reboot command sent",
+    "✗ Сервер не вернулся за 10 минут. Проверьте его через панель хостинга.": "Server did not come back within 10 minutes. Check it in your hosting control panel.",
+    "\nОжидание прервано.": "\nStopped waiting.",
+    "✗ Вход ключом телефона не прошёл — старые ключи НЕ тронуты": "Phone key login failed — old keys were NOT changed",
+    "✗ Не удалось отключить старые ключи — на сервере выполните вручную:": "Could not disable old keys — run manually on the server:",
+    "✗ Шаг 1–3 не выполнен (код {p0}). Сервер не изменён или изменён частично — вход паролем работает.": "Steps 1–3 failed (code {p0}). The server is unchanged or partially changed — password login still works.",
+    "✗ Вход ключом телефона или настройка не прошли (код {p0}). Старый вход паролем остался.": "Phone key login or setup failed (code {p0}). The old password login still works.",
+    "✓ Готово: вход только {p0}@{p1}:{p2} ключом телефона (или резервным). Root и пароли отключены.": "Done: login only as {p0}@{p1}:{p2} with the phone key (or backup key). Root and password login disabled.",
+    "✗ Новый вход не подтвердился — через 3 мин сервер сам вернёт порты {p0}, {p1} и вход паролем.": "New login not confirmed — in 3 minutes the server will automatically restore ports {p0}, {p1}, and password login.",
+    "✗ Файл не найден": "File not found",
+    "  ✗ пропущено, неверный формат — ": "  skipped, invalid format — ",
+    "Недоступно: {p0}. Добавить их всё равно (сохранятся с пометкой)?": "Unreachable: {p0}. Add them anyway (saved with a warning)?",
+    "  Не добавлено: {p0}": "  Not added: {p0}",
+    "удалить": "remove",
+    "отозвать": "revoke access for",
+    "отзыв {p0}: не выполнен на {p1} из {p2}": "revoking access for {p0}: failed on {p1} of {p2}",
+    "добавить": "add",
+    "ПЕРЕВЫПУСК": "ROTATE",
+    "→ {p0}: новые ключи": "→ {p0}: new keys",
+    "✗ Телефон не применил новые ключи": "The phone did not apply the new keys",
+    "→ {p0}: снять старые ключи": "→ {p0}: remove old keys",
+    "перевыпуск: готово {p0}, ошибок {p1}": "rotation: {p0} done, {p1} errors",
+    "✗ Не тот пароль\n": "Wrong password\n",
+    "сервер": "server",
+    "Подключиться резервным ключом": "Connect with the backup key",
+    "Привязать сопряжённый телефон к этому серверу": "Link the paired phone to this server",
+    "✓ Новый телефон проверен, выбранный старый ключ отозван": "New phone verified; selected old key revoked",
+    "✗ Старый ключ НЕ отозван — повторите восстановление": "Old key NOT revoked — repeat recovery",
+    "✗ Неверный пароль": "Incorrect password",
+    "пока!": "bye!",
+    ", не из пакета": ", not from a package",
+    "последний час": "last hour",
+    "сутки": "24 hours",
+    " попыт.": " attempts",
+    "последняя ": "last ",
+    "IP телефона (виден на его экране), ": "Phone IP (shown on its screen), ",
+    "  сеанс завершён\n": "  session ended\n",
+    "Отозвать участника (снять ключи)": "Revoke member access (remove keys)",
+    "не выполнено — повторите": "failed — try again",
+    "ключ SSH": "SSH key",
+    "сопряжён": "paired",
+    "не сопряжён": "not paired",
+    "Начать сопряжение": "Start pairing",
+    "Отменить сопряжение": "Unpair",
+    "Подтвердите изменение на телефоне…": "Confirm the change on the phone…",
+    "Выполните на сервере {p0}:\n": "Run on server {p0}:\n",
+    "Массовое добавление": "Bulk add",
+    "Массовое удаление": "Bulk removal",
+    "Перевыпуск ключей (на всех серверах)": "Rotate keys (on all servers)",
+    "Участники серверов (командный режим)": "Server members (team mode)",
+    "запись команд включена": "command logging enabled",
+    "история команд {p0} (только чтение)": "command history {p0} (read-only)",
+    "полная": "full",
+    "быстрая": "quick",
+    "Сборщик истории: ": "History collector: ",
+    "История пуста: установите сборщик (пункт 5). Первые точки — через 5 минут.": "No history: install the collector (option 5). First data points in 5 minutes.",
+    " сборщик истории нагрузки": " load history collector",
+    "польз.": "user",
+    "Вы участник команды: доступ восстанавливает админ (добавит ваш новый ключ).": "You are a team member: ask the admin to restore access by adding your new key.",
+    "Публичный ключ участника (строка ssh-ed25519 …)": "Member's public key (ssh-ed25519 … line)",
+    "\n  5. только после этого: порт {p0}, вход root и пароли — отключить\n": "\n  5. only then: disable port {p0}, root login, and password login\n",
+    "     пароль не подобрать; войти можно только ключом": "     no passwords to guess; key-only login",
+    "Строки «имя хост [порт] [пользователь]», пустая строка — конец:": "Enter lines as 'name host [port] [user]'; a blank line ends the list:",
+    "\nНомера серверов через запятую или пробел (Enter — отмена): ": "\nServer numbers separated by commas or spaces (Enter to cancel): ",
+    "не выполнено (недоступен или отказ sudo) — повторите": "failed (unreachable or sudo denied) — try again",
+    "\nНомера через запятую или пробел (Enter — отмена): ": "\nNumbers separated by commas or spaces (Enter to cancel): ",
+    "затереть остальные ключи": "overwrite other keys",
+    "{p0}: потеряют доступ ключей — {p1}": "{p0}: keys losing access — {p1}",
+    "новые ключи не записаны (сервер недоступен?)": "new keys not installed (server unreachable?)",
+    "Всё равно перейти на новые ключи?": "Switch to the new keys anyway?",
+    "Отменено, новые ключи убраны с серверов.": "Canceled; new keys removed from servers.",
+    "новый ключ записан, но вход им не прошёл — старый не снят": "new key installed, but login with it failed — old key not removed",
+    "Другой сервер…": "Another server…",
+    "привязать к серверу {p0}": "link to server {p0}",
+    "  пропущен: недопустимый адрес": "  skipped: invalid address",
+    "Enter — искать снова (осталось {p0}): ": "Enter — search again ({p0} remaining): ",
+    "Enter — отмена: ": "Enter — cancel: ",
+    "Для подтверждения введите СТЕРЕТЬ: ": "Type ERASE to confirm: ",
+    "  На компьютере «{p0}» другая версия программы: {p1} (на телефоне {p2}).": "  Computer “{p0}” has a different program version: {p1} (phone: {p2}).",
+    "  Обновить телефон? Да — если вы сами обновляли программу на компьютере.": "  Update the phone? Say yes only if you updated the program on the computer yourself.",
+    "Подключиться": "Connect",
+    "Изменить": "Edit",
+    "Удалить": "Remove",
+    "Туннель к веб-панели (3x-ui и др.)": "Tunnel to web panel (3x-ui, etc.)",
+    "снято": "revoked",
+    "участника не было": "member was not present",
+    "Журнал одобрений": "Approval log",
+    "Мой публичный ключ (отправить админу команды)": "My public key (send to team admin)",
+    "Код с экрана телефона: ": "Code shown on the phone: ",
+    "  — подтвердите на телефоне": "  — confirm on the phone",
+    "(подпись — на телефоне)": "(signing happens on the phone)",
+    "✓ Сохранено": "Saved",
+    "✗ Не сохранено (отклонено на телефоне)": "Not saved (rejected on the phone)",
+    "Имя в подписи ключа на сервере сменится после «Обновить ключи на сервере».": "The name in the key comment on the server will change after “Update keys on server”.",
+    "Список серверов (изменить / команда установки / удалить)": "Server list (edit / installation command / remove)",
+    "Добавить сервер": "Add server",
+    "✓ Права: {p0}": "Permissions: {p0}",
+    "✗ Вход не удался": "Login failed",
+    "Недостаточно прав. Нужно: {p0}.": "Insufficient permissions. Required: {p0}.",
+    "Права определяются при каждом входе; если их добавили — «Проверить права».": "Permissions are checked at each login; if new permissions were granted, select “Check permissions”.",
+    "запись команд выключена": "command logging disabled",
+    "Сегодня": "Today",
+    "Неделя": "Week",
+    "история команд · {p0}": "command history · {p0}",
+    "удалить (и всю историю)": "remove (including all history)",
+    "установить (графики за час / сутки / месяц)": "install (hourly / daily / monthly charts)",
+    "установить": "install",
+    "✓ Сервер снова в сети ({p0} с)": "Server is back online ({p0} s)",
+    "пропущен (отмена входа)": "skipped (login canceled)",
+    "неверный формат": "invalid format",
+    "Для подтверждения введите ник {p0}: ": "Type the nickname {p0} to confirm: ",
+    "ключи не сняты (сервер недоступен или вход не прошёл) — оставлен в списке": "keys not removed (server unreachable or login failed) — kept in the list",
+    " (участники: {p0})": " (members: {p0})",
+    "Участники выше потеряют доступ. Продолжить?": "The members listed above will lose access. Continue?",
+    " — новый резервный пароль не применён, действует старый": " — new backup password not applied; the old one still works",
+    "На них останутся только старые ключи": "Only the old keys will remain on these servers",
+    "обновление программы": "program update",
+    "Удалить сопряжение с компьютером?": "Unpair from the computer?",
+    "публичный ключ": "public key",
+    "if id \"$L\" >/dev/null 2>&1; then home; ours && mine || { echo \"✗ пользователь $L уже есть и это не участник $N — не трогаю\"; exit 4; }; new=0; else useradd -m -s /bin/sh \"$L\" 2>/dev/null || adduser -D -s /bin/sh \"$L\" || exit 1; new=1; home; case \"$(pw)\" in \"!\"|\"!!\") usermod -p \"*\" \"$L\" 2>/dev/null || sed -i \"s/^$L:!*:/$L:*:/\" /etc/shadow;; esac; fi; echo \"$N\" > \"$R/$L\"; mkdir -p \"$h/.ssh\" || exit 1; ": "if id \"$L\" >/dev/null 2>&1; then home; ours && mine || { echo \"user $L already exists and is not member $N — leaving unchanged\"; exit 4; }; new=0; else useradd -m -s /bin/sh \"$L\" 2>/dev/null || adduser -D -s /bin/sh \"$L\" || exit 1; new=1; home; case \"$(pw)\" in \"!\"|\"!!\") usermod -p \"*\" \"$L\" 2>/dev/null || sed -i \"s/^$L:!*:/$L:*:/\" /etc/shadow;; esac; fi; echo \"$N\" > \"$R/$L\"; mkdir -p \"$h/.ssh\" || exit 1; ",
+    "✓ Код верный": "Code is correct",
+    "Новый VPS: настроить с нуля": "New VPS: set up from scratch",
+    "время  исходный пользователь -> от чьего имени:  команда\n": "time  original user -> run as:  command\n",
+    "Удалить сборщик и всю накопленную историю?": "Remove the collector and all collected history?",
+    "сборщик установлен: точка раз в 5 мин, хранится 31 день": "collector installed: one data point every 5 min, retained for 31 days",
+    "сборщик и история удалены": "collector and history removed",
+    "Номера через запятую или пробел: ": "Numbers separated by commas or spaces: ",
+    " и ещё {p0}": " and {p0} more",
+    "\n  4. проверить вход ключом телефона на порт {p0}\n": "\n  4. test phone key login on port {p0}\n",
+    "     убедиться, что новый вход работает": "     make sure the new login works",
+    "не удалось прописать ключи (вход или права)": "could not install keys (login or permissions)",
+    "\nДля подтверждения введите ПЕРЕВЫПУСК: ": "\nType ROTATE to confirm: ",
+    ": вход телефоном туда пропадёт, останется резервный пароль": ": phone login will stop working there; the backup password will still work",
+    "Перезапуск…": "Restarting…",
+    "  ✓ Программа обновлена — перезапущу после сеанса": "  Program updated — will restart after the session",
+    "Откройте в браузере телефона http://127.0.0.1:{p0}/  Ctrl+C — закрыть.": "Open http://127.0.0.1:{p0}/ in your phone's browser.  Ctrl+C to close.",
+    "Пока туннель открыт, порт доступен и другим приложениям телефона — закройте сразу после работы.": "While the tunnel is open, other apps on your phone can access the port too. Close it as soon as you finish.",
+    "Это не секрет: скопируйте и отправьте админу.": "This is not secret: copy it and send it to the admin.",
+    "обновить ключи на сервере": "update keys on server",
+    "✓ Ключи на сервере обновлены": "Keys on server updated",
+    "✗ Не удалось (вход или запись ключей)": "Failed (login or writing keys)",
+    "Удалить «{p0}» из списка?": "Remove “{p0}” from the list?",
+    "Подтвердите удаление на телефоне…": "Confirm removal on the phone…",
+    "попытки взлома": "break-in attempts",
+    "✓ Сервер в сети": "Server is online",
+    " (момент перезагрузки не застали — она была быстрой)": " (reboot was too fast to observe)",
+    "  ✗ Обновление не прошло проверку — оставлена старая версия": "  Update failed verification — kept the old version",
+    "✓ Удалено": "Removed",
+    "сервер не найден в списке телефона": "server not found in the phone's list",
+    "\n  3. SSH слушает порты {p0} и {p1} (пароль пока работает)\n": "\n  3. SSH listens on ports {p0} and {p1} (password login still works)\n",
+    "     новый порт — меньше ботов; старый — чтобы не запереться": "     new port for fewer bots; old port to avoid locking yourself out",
+    "удалено": "deleted",
+    "ключ телефона": "phone key",
+    "резервный ключ": "backup key",
+    "  Перевыпустить?": "  Reissue?",
+    "перевыпуск: {p0}": "reissue: {p0}",
+    "перевыпуск: новые ключи действуют": "reissue: new keys are active",
+    "  ⚠ Перевыпуск: {p0} — на всех серверах ({p1})": "  Reissue: {p0} — on all servers ({p1})",
+    "  ⚠ Затереть: на серверах останутся только ключи ssh-storage этого телефона": "  Overwrite: only this phone's ssh-storage keys will remain on the servers",
+    "  Старый резервный пароль перестанет работать.": "  The old backup password will stop working.",
+    ", затереть": ", overwrite",
+    "  ✓ новые ключи действуют": "  new keys are active",
+    "\n  2. {p0}: ключ телефона и резервный ключ\n": "\n  2. {p0}: phone key and backup key\n",
+    "     вход с телефона; резервный — если телефон потерян": "     log in from your phone; backup access if the phone is lost",
+    "\nПлан для {p0}:\n  1. apt update; создать {p1} (sudo с паролем), TERM в ~/.profile\n": "\nPlan for {p0}:\n  1. apt update; create {p1} (password required for sudo), TERM in ~/.profile\n",
+    "  Разрешить вход на {p0} ({p1}@{p2}:{p3})?": "  Allow login to {p0} ({p1}@{p2}:{p3})?",
+    "Участников добавляет админ команды.": "The team admin adds members.",
+    "     свежий список пакетов; работать не под root; цвета в терминале": "     refresh package lists; work without root; terminal colors",
+    "  ✓ сервер принял ключ телефона — подпись выдана": "  server accepted the phone key — signature issued",
+    "  Добавить серверы ({p0}):": "  Add servers ({p0}):",
+    "  Разрешить добавление всех?": "  Allow adding all?",
+    "из списка и снять ключи с серверов": "from the list and remove keys from the servers",
+    "только из списка": "from the list only",
+    "удалить серверы ({p0}), {p1}": "remove servers ({p0}), {p1}",
+    "  Удалить серверы ({p0}), {p1}:": "  Remove servers ({p0}), {p1}:",
+    "Этот пункт в разработке (этап 2).": "This feature is in development (phase 2).",
+    "  Удалить?": "  Remove?",
+    "удалить сервер": "remove server",
+    "  ✓ удалено из списка: {p0}": "  removed from list: {p0}",
+    "добавить сервер": "add server",
+    "  Добавить сервер «{p0}» ({p1}@{p2}:{p3})?": "  Add server “{p0}” ({p1}@{p2}:{p3})?",
+    "изменить сервер": "edit server",
+    "вход": "login",
+    "  Изменить сервер с компьютера:": "  Edit server from computer:",
+    "  Сохранить?": "  Save?",
+    "  Удалить «{p0}» ({p1}@{p2}) из списка?": "  Remove “{p0}” ({p1}@{p2}) from the list?",
+    "  ✓ сохранено": "  saved",
+    "  отменено": "  cancelled",
+    "без изменений": "no changes",
+    "  ✓ вход на «{p0}» выполнен, сеанс закрыт": "  logged in to “{p0}”, session closed",
+    "  ✗ вход на «{p0}» не удался: сервер не принял ключ телефона или нет связи": "  login to “{p0}” failed: server rejected the phone's key or could not be reached",
+    "  ✗ вход на «{p0}» не удался": "  login to “{p0}” failed",
+    "  ✓ сервер «{p0}» сохранён": "  server “{p0}” saved",
+    "разрешено": "allowed",
+    "отклонено": "rejected",
+    "выполнен": "completed",
+    "не удался": "failed",
+}
+# END GENERATED TRANSLATIONS
+
+def restart_program():
+    # Язык влияет и на модульные константы (тексты скриптов для сервера), поэтому применяется перезапуском.
+    os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + [a for a in sys.argv[1:] if a != "--install"])
+
+def language_settings(state, save, apply=None):
+    header(tr("Language / Язык"))
+    ch = menu(["English", "Русский"], default=2 if LANG == "ru" else 1)
+    code = {"1": "en", "2": "ru"}.get(ch)
+    if code is None or code == LANG: return
+    state["language"] = code; save(); set_language(code)
+    (apply or restart_program)()
 
 # ---------- цвета (палитра терминала) ----------
 USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -63,7 +736,7 @@ def header(title):
     clear()
     w = min(shutil.get_terminal_size().columns, 60)
     print(cyan("╭" + "─" * (w - 2) + "╮"))
-    t = f" ⚿  SSH Storage · {title}"
+    t = f" SSH Storage · {title}"
     print(cyan("│") + bold(t.ljust(w - 2)) + cyan("│"))
     print(cyan("╰" + "─" * (w - 2) + "╯"))
     print()
@@ -73,10 +746,10 @@ def menu(items, default=1):
         mark = green("›") if i == default else " "
         print(f" {mark} {yellow(str(i))}  {it}")
     print()
-    ans = input(blue(f"Выбор [{default}]: ")).strip()
+    ans = input(blue(tr('Выбор [{p0}]: ', p0=default))).strip()
     return ans if ans else str(default)
 
-def pause(msg="Enter — продолжить"): input(dim(msg))
+def pause(msg=tr("Enter — продолжить")): input(dim(msg))
 def yes(q, default=False):
     a = input(q + (" [Y/n]: " if default else " [y/N]: ")).strip().lower()
     return default if not a else a in ("y", "yes", "д", "да")
@@ -151,8 +824,30 @@ def mpint(n):
     return sstr(b"\0" + b if b and b[0] & 0x80 else b)
 
 def read_str(buf, off):
+    if off < 0 or off + 4 > len(buf): raise ValueError(tr("обрезанная SSH-строка"))
     n = struct.unpack(">I", buf[off:off + 4])[0]
+    if off + 4 + n > len(buf): raise ValueError(tr("обрезанная SSH-строка"))
     return buf[off + 4:off + 4 + n], off + 4 + n
+
+def valid_sign_request(data, user, blob):
+    """RFC 4252 §7 + OpenSSH hostbound: вход выбранным пользователем и нашим ключом.
+    Имя хоста в этих данных отсутствует: это не защита от заражённого сопряжённого ПК.
+    """
+    try:
+        sid, off = read_str(data, 0)
+        if not sid: return False
+        tail = data[off:]
+        for method in (b"publickey", b"publickey-hostbound-v00@openssh.com"):
+            expected = (b"\x32" + sstr(user.encode()) + sstr(b"ssh-connection") + sstr(method)
+                        + b"\x01" + sstr(b"ecdsa-sha2-nistp256") + sstr(blob))
+            if method == b"publickey":
+                if tail == expected: return True
+            elif tail.startswith(expected):
+                hostkey, end = read_str(tail, len(expected))
+                return bool(hostkey) and end == len(tail)
+        return False
+    except ValueError:
+        return False
 
 def der_to_rs(der):
     """ECDSA-подпись Java (DER SEQUENCE{INTEGER r, INTEGER s}) → (r, s)."""
@@ -161,11 +856,11 @@ def der_to_rs(der):
         if n < 0x80: return n, i + 1
         k = n & 0x7F
         return int.from_bytes(der[i + 1:i + 1 + k], "big"), i + 1 + k
-    if der[0] != 0x30: raise ValueError("не DER")
+    if der[0] != 0x30: raise ValueError(tr("не DER"))
     _, i = length(1)
     out = []
     for _ in range(2):
-        if der[i] != 0x02: raise ValueError("не DER")
+        if der[i] != 0x02: raise ValueError(tr("не DER"))
         n, i = length(i + 1)
         out.append(int.from_bytes(der[i:i + n], "big")); i += n
     return out
@@ -256,11 +951,11 @@ def with_nick(line, nick):
     return line.rsplit(" ", 1)[0] + " " + (f"{PHONE_TAG}:{nick}" if nick else PHONE_TAG)
 
 def install_cmd(phone_line, rec_line):
-    """Команда для сервера: заменить свой ключ телефона (тот же ключ с любым именем или старая подпись),
+    """Команда для сервера: обновить подпись своего ключа телефона (тот же ключ с любым именем),
     добавить резервный; ключи других участников и прочее не трогать."""
     return ("umask 077; mkdir -p ~/.ssh && f=~/.ssh/authorized_keys && touch \"$f\" && "
-            f"{{ grep -vF '{phone_line.split()[1]}' \"$f\" | grep -v ' {PHONE_TAG}$'; echo '{phone_line}'; }} > \"$f.new\" && "
-            + (f"{{ grep -qF '{rec_line.split()[1]}' \"$f.new\" || echo '{rec_line}' >> \"$f.new\"; }} && " if rec_line else "") +
+            f"{{ grep -vF {shlex.quote(phone_line.split()[1])} \"$f\"; printf '%s\\n' {shlex.quote(phone_line)}; }} > \"$f.new\" && "
+            + (f"{{ grep -qF {shlex.quote(rec_line.split()[1])} \"$f.new\" || printf '%s\\n' {shlex.quote(rec_line)} >> \"$f.new\"; }} && " if rec_line else "") +
             "cat \"$f.new\" > \"$f\" && rm -f \"$f.new\" && echo SSH-STORAGE-OK")
 
 TERM_CMD = "grep -qs 'TERM=xterm-256color' ~/.profile || echo 'export TERM=xterm-256color' >> ~/.profile"
@@ -273,20 +968,7 @@ SSHD_RESTART = ("if systemctl is-active -q ssh.socket 2>/dev/null; then systemct
 def vps_step1(user, old_port, port, install):
     """Шаг 1 (вход паролем, root или sudo): пользователь, ключи телефона, оба порта. Пароль и root пока работают."""
     assert re.fullmatch(LOGIN_RE, user) and port_ok(str(port)) and port_ok(str(old_port))
-    root = (f'set -e; command -v apt-get >/dev/null || {{ echo "Нужна Ubuntu / Debian (apt)"; exit 5; }}; '
-            f'grep -qsi "^Include /etc/ssh/sshd_config.d/" /etc/ssh/sshd_config || {{ echo "В sshd_config нет Include sshd_config.d"; exit 6; }}; '
-            f'apt-get update -qq || true; '
-            f'if ! id {user} >/dev/null 2>&1; then adduser --disabled-password --gecos "" {user}; '
-            f'echo "Придумайте пароль для sudo пользователя {user}:"; passwd {user}; fi; usermod -aG sudo {user}; '
-            f'su - {user} -s /bin/sh -c {shlex.quote(TERM_CMD + "; " + install)}; '
-            # чужие строки Port (sshd_config и другие *.conf) — в комментарий с копией *.ssh-storage.bak, иначе старый порт остался бы открыт
-            f'for c in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do if [ -f "$c" ] && [ "$c" != {VPS_CONF} ] && '
-            f'grep -qi "^[[:space:]]*port[[:space:]]" "$c"; then sed -i.ssh-storage.bak "s/^[[:space:]]*[Pp]ort[[:space:]]/#&/" "$c"; fi; done; '
-            f'printf "Port {old_port}\nPort {port}\n" > {VPS_CONF}; sshd -t || {{ rm -f {VPS_CONF}; '
-            f'for c in /etc/ssh/sshd_config.ssh-storage.bak /etc/ssh/sshd_config.d/*.ssh-storage.bak; do '
-            f'if [ -f "$c" ]; then mv "$c" "${{c%.ssh-storage.bak}}"; fi; done; exit 7; }}; '
-            f'if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow {port}/tcp; fi; '
-            f'{SSHD_RESTART}')
+    root = (tr('set -e; command -v apt-get >/dev/null || {{ echo "Нужна Ubuntu / Debian (apt)"; exit 5; }}; grep -qsi "^Include /etc/ssh/sshd_config.d/" /etc/ssh/sshd_config || {{ echo "В sshd_config нет Include sshd_config.d"; exit 6; }}; apt-get update -qq || true; if ! id {p0} >/dev/null 2>&1; then adduser --disabled-password --gecos "" {p1}; echo "Придумайте пароль для sudo пользователя {p2}:"; passwd {p3}; fi; usermod -aG sudo {p4}; su - {p5} -s /bin/sh -c {p6}; for c in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do if [ -f "$c" ] && [ "$c" != {p7} ] && grep -qi "^[[:space:]]*port[[:space:]]" "$c"; then sed -i.ssh-storage.bak "s/^[[:space:]]*[Pp]ort[[:space:]]/#&/" "$c"; fi; done; printf "Port {p8}\nPort {p9}\n" > {p10}; sshd -t || {{ rm -f {p11}; for c in /etc/ssh/sshd_config.ssh-storage.bak /etc/ssh/sshd_config.d/*.ssh-storage.bak; do if [ -f "$c" ]; then mv "$c" "${{c%.ssh-storage.bak}}"; fi; done; exit 7; }}; if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow {p12}/tcp; fi; {p13}', p0=user, p1=user, p2=user, p3=user, p4=user, p5=user, p6=shlex.quote(TERM_CMD + "; " + install), p7=VPS_CONF, p8=old_port, p9=port, p10=VPS_CONF, p11=VPS_CONF, p12=port, p13=SSHD_RESTART))
     return f'S=""; [ "$(id -u)" = 0 ] || S=sudo; $S sh -c {shlex.quote(root)}'
 
 def vps_step2(port):
@@ -351,7 +1033,7 @@ echo "==END=="'''
 
 # Попытки взлома (2.3). IP уходят с сервера только у источников с ≥5 неудачными входами или
 # с попытками под несуществующим логином; остальные неудачи — по пользователям, без IP.
-ATTACKS_SH = LOG_SH + r'''echo "==ATTACKS=="
+ATTACKS_SH = LOG_SH + tr(r'''echo "==ATTACKS=="
 printf '%s\n' "$A" | awk '
 function add(ip, u, inv) { c[ip]++; if (inv) bad[ip] = 1; if (index(" " us[ip] " ", " " u " ") == 0) us[ip] = us[ip] " " u
   last[ip] = ts; uc[u]++; ul[u] = ts }
@@ -364,7 +1046,7 @@ function add(ip, u, inv) { c[ip]++; if (inv) bad[ip] = 1; if (index(" " us[ip] "
   if (match($0, /for [^ ]+ from [^ ]+/)) { split(substr($0, RSTART, RLENGTH), w, " "); add(w[4], w[2], 0); fl[pid] = 1 } }
 END { for (ip in c) if (c[ip] >= 5 || bad[ip]) print "IP", c[ip], ip, (bad[ip] ? "invalid" : "-"), last[ip], us[ip]
       for (u in uc) print "USER", uc[u], u, ul[u] }' | sort -k1,1 -k2,2nr | awk -v N=$N '{ if (++n[$1] <= N) print }'
-echo "==END=="'''
+echo "==END=="''')
 
 # Диагностика (2.5), только чтение. Процессы — без аргументов командной строки (там бывают пароли).
 # Не предлагаются: PID 1, sshd, процессы своего сеанса.
@@ -427,17 +1109,17 @@ def analyze_procs(out, base):
             continue
         st = status(e)
         if argv0.startswith("[") or comm.startswith("kworker") and st != "pkg":
-            add("crit", e, "выдаёт себя за поток ядра (у настоящих нет файла программы)", pr)
-        if st == "mod": add("crit", e, "файл программы из пакета изменён — не совпадает с контрольной суммой пакета", pr)
-        if e.endswith(" (deleted)"): add("warn", e, "файл программы удалён после запуска (после обновления — норма до перезапуска)", pr)
-        if e.startswith(SUSPECT_DIRS): add("warn", e, "запущена из временной / домашней папки", pr)
+            add("crit", e, tr("выдаёт себя за поток ядра (у настоящих нет файла программы)"), pr)
+        if st == "mod": add("crit", e, tr("файл программы из пакета изменён — не совпадает с контрольной суммой пакета"), pr)
+        if e.endswith(" (deleted)"): add("warn", e, tr("файл программы удалён после запуска (после обновления — норма до перезапуска)"), pr)
+        if e.startswith(SUSPECT_DIRS): add("warn", e, tr("запущена из временной / домашней папки"), pr)
         name = e.removesuffix(" (deleted)").rsplit("/", 1)[-1]
         if st != "pkg" and comm != name[:15]:
-            add("warn", e, f"имя «{comm}» не совпадает с файлом программы «{name}» и программа не из пакета", pr)
+            add("warn", e, tr('имя «{p0}» не совпадает с файлом программы «{p1}» и программа не из пакета', p0=comm, p1=name), pr)
         if base is not None:
             sha = exes.get(e, ("-",))[0]
-            if e not in base: add("info", e, "новая программа (не было при «доверять»)" + ("" if st == "pkg" else ", не из пакета"), pr)
-            elif sha != "-" and base[e] != sha: add("warn", e, "файл программы изменился с момента «доверять»", pr)
+            if e not in base: add("info", e, tr("новая программа (не было при «доверять»)") + ("" if st == "pkg" else tr(", не из пакета")), pr)
+            elif sha != "-" and base[e] != sha: add("warn", e, tr("файл программы изменился с момента «доверять»"), pr)
     hidden = [f[1:] for f in rows if f[0] == "H" and len(f) == 3]
     ports = [f[1:] for f in rows if f[0] == "L" and len(f) == 4]
     order = {"crit": 0, "warn": 1, "info": 2}
@@ -445,7 +1127,7 @@ def analyze_procs(out, base):
 
 # Зачатки неисправностей (2.6), только чтение. Строки «статус|что|подробно», статус ok / warn / crit.
 # Быстрая: диск, inode, только-чтение, память, swap, нагрузка, время. Полная (FULL=1): + OOM, рост ошибок, SSL, обновления.
-HEALTH_SH = r'''o() { echo "$1|$2|$3"; }
+HEALTH_SH = tr(r'''o() { echo "$1|$2|$3"; }
 df -P -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 { u = $5 + 0; s = (u >= 95 ? "crit" : u >= 85 ? "warn" : "ok"); print s "|диск " $6 "|занято " u "%" }'
 df -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 && $5 != "-" { u = $5 + 0; if (u >= 85) print (u >= 95 ? "crit" : "warn") "|inode " $6 "|занято " u "% inode" }'
 # только чтение — если у устройства нет ни одного rw-монтирования (bind-ro вроде /nix/store — норма)
@@ -479,7 +1161,7 @@ if [ "$FULL" = 1 ]; then
   elif command -v checkupdates >/dev/null 2>&1; then u=$(checkupdates 2>/dev/null | wc -l); fi
   [ -n "$u" ] && { [ "$u" -gt 0 ] && o warn "обновления безопасности" "доступно: $u" || o ok "обновления безопасности" "нет"; }
 fi
-echo "==END=="'''
+echo "==END=="''')
 
 # Сборщик истории нагрузки: cron раз в 5 мин дописывает строку «время диск% память% swap% нагрузка5мин»
 # в ~/.ssh-storage-metrics. Без sudo и пакетов: два awk и read — доли миллисекунды. Хранится 31 день
@@ -496,14 +1178,14 @@ COLLECT_ON = ('umask 077; c="$HOME/.ssh-storage-collect.sh"; printf "%s" ' + shl
               '&& sh "$c" && echo SSH-STORAGE-OK')
 COLLECT_OFF = ('{ crontab -l 2>/dev/null | grep -v ssh-storage-collect; true; } | crontab - && '
                'rm -f "$HOME/.ssh-storage-collect.sh" "$HOME/.ssh-storage-metrics" "$HOME/.ssh-storage-metrics.n" && echo SSH-STORAGE-OK')
-METRICS = ("диск /", "память", "swap", "нагрузка")  # столбцы 1..4 в строке истории
+METRICS = (tr("диск /"), tr("память"), "swap", tr("нагрузка"))  # столбцы 1..4 в строке истории
 
 def show_metric(pts, i, span, cores=1, now=None, width=60, height=8):
     """График столбца i за последние span секунд: в столбце графика — максимум (пики видны); пик, среднее, минимум."""
     now = now or time.time(); t0 = now - span
     v = [(f[0], f[i]) for f in pts if f[0] >= t0]
-    print(bold(f"{METRICS[i - 1]} · " + {3600: "последний час", 86400: "сутки"}.get(span, "месяц")))
-    if not v: print(yellow("  Нет данных за этот период.")); return
+    print(bold(f"{METRICS[i - 1]} · " + {3600: tr("последний час"), 86400: tr("сутки")}.get(span, tr("месяц"))))
+    if not v: print(yellow(tr("  Нет данных за этот период."))); return
     col = [None] * width
     for t, x in v:
         for k in range(max(0, int((t - 300 - t0) * width / span) + 1), min(width - 1, int((t - t0) * width / span)) + 1):
@@ -517,11 +1199,11 @@ def show_metric(pts, i, span, cores=1, now=None, width=60, height=8):
     fmt = "%H:%M" if span <= 86400 else "%d.%m"
     print(f"  {'':>7} └{time.strftime(fmt, time.localtime(t0)):<{width - 5}}{time.strftime(fmt, time.localtime(now))}")
     pk = max(v, key=lambda f: f[1]); xs = [x for _, x in v]
-    print(f"\n  Пик:     {bold(f'{pk[1]:g}{unit}')}  {dim(time.strftime('%d.%m %H:%M', time.localtime(pk[0])))}")
-    print(f"  Среднее: {sum(xs) / len(xs):.1f}{unit}")
-    print(f"  Минимум: {min(xs):g}{unit}")
-    if i == 4: print(dim(f"  Нагрузка — средняя за 5 мин; {cores} ядер = загрузка 100%."))
-    print(dim(f"  Точек: {len(v)} из ~{span // 300} (пустые места — сервер был выключен или сборщика ещё не было)."))
+    print(tr('\n  Пик:     {p0}  {p1}', p0=bold(f'{pk[1]:g}{unit}'), p1=dim(time.strftime('%d.%m %H:%M', time.localtime(pk[0])))))
+    print(tr('  Среднее: {p0}{p1}', p0=format(sum(xs) / len(xs), '.1f'), p1=unit))
+    print(tr('  Минимум: {p0}{p1}', p0=format(min(xs), 'g'), p1=unit))
+    if i == 4: print(dim(tr('  Нагрузка — средняя за 5 мин; {p0} ядер = загрузка 100%.', p0=cores)))
+    print(dim(tr('  Точек: {p0} из ~{p1} (пустые места — сервер был выключен или сборщика ещё не было).', p0=len(v), p1=span // 300)))
 
 def show_health(out):
     icon = {"ok": green("✓"), "warn": yellow("⚠"), "crit": red("✗")}
@@ -529,38 +1211,43 @@ def show_health(out):
     for st, what, info in sorted(rows, key=lambda f: {"crit": 0, "warn": 1}.get(f[0], 2)):
         print(f"  {icon.get(st, '?')} {what:<24} {info}")
     bad = sum(f[0] != "ok" for f in rows)
-    print("\n" + (green("Всё в порядке.") if not bad else yellow(f"Требуют внимания: {bad}.")))
+    print("\n" + (green(tr("Всё в порядке.")) if not bad else yellow(tr('Требуют внимания: {p0}.', p0=bad))))
 
 def diag_action_cmd(kind, items):
     """kind: restart (юниты) | TERM | KILL (пары pid, имя). Перед kill — проверка, что PID всё ещё тот же процесс."""
     pre = 'S=""; [ "$(id -u)" = 0 ] || S=sudo; '
     if kind == "restart":
-        return pre + "$S systemctl restart " + " ".join(shlex.quote(u) for u in items) + " && echo '✓ перезапущено'"
-    return pre + "; ".join(
-        f'if [ "$(ps -o comm= -p {int(pid)})" = {shlex.quote(name)} ]; then $S kill -{kind} {int(pid)} && echo "✓ {int(pid)} {name}"; '
-        f'else echo "— {int(pid)} {name}: процесс уже завершён или сменился"; fi' for pid, name in items)
+        return pre + "$S systemctl restart " + " ".join(shlex.quote(u) for u in items) + tr(" && echo '✓ перезапущено'")
+    if kind not in ("TERM", "KILL") or any(int(pid) <= 1 for pid, _ in items):
+        raise ValueError(tr("недопустимый сигнал или PID"))
+    def one(pid, name):
+        done = shlex.quote(f"✓ {int(pid)} {name}")
+        gone = shlex.quote(tr("— {p0} {p1}: процесс уже завершён или сменился", p0=int(pid), p1=name))
+        return (f'if [ "$(ps -o comm= -p {int(pid)})" = {shlex.quote(name)} ]; then $S kill -{kind} {int(pid)} && '
+                f'printf "%s\\n" {done}; else printf "%s\\n" {gone}; fi')
+    return pre + "; ".join(one(pid, name) for pid, name in items)
 
 def history_cmd(days=7, n=50, script=None):
     return f"D={int(days)}; N={int(n)}\n" + (script or HISTORY_SH)
 
 def warn_access(sec):
     if not ({"SUDO-NOPW", "root", "adm", "systemd-journal"} & set(" ".join(sec.get("ACCESS", [])).split())):
-        print(yellow("  ⚠ Нет доступа к журналам (нужны группа adm / systemd-journal или sudo без пароля) — данные могут быть неполными.\n"))
+        print(yellow(tr("  ⚠ Нет доступа к журналам (нужны группа adm / systemd-journal или sudo без пароля) — данные могут быть неполными.\n")))
 
 def show_attacks(sec):
     rows = [l.split() for l in sec.get("ATTACKS", [])]
     warn_access(sec)
     t = lambda v: v.replace("T", " ").replace("_", " ")[:16]
-    print(bold("Источники атак") + dim("  (IP — только при ≥5 неудачных входах или входе под несуществующим логином)"))
+    print(bold(tr("Источники атак")) + dim(tr("  (IP — только при ≥5 неудачных входах или входе под несуществующим логином)")))
     ips = [f for f in rows if f[0] == "IP"]
     for f in ips or [None]:
         if not f: print("  " + dim("—")); break
-        mark = red("несуществующий логин") if f[3] == "invalid" else yellow("≥5 неудач")
-        print(f"  {bold(f[2]):<20} {red(f[1] + ' попыт.')}  {mark}  {dim('последняя ' + t(f[4]))}  логины: {' '.join(f[5:])[:80]}")
-    print("\n" + bold("Неудачные входы по пользователям") + dim("  (без IP)"))
+        mark = red(tr("несуществующий логин")) if f[3] == "invalid" else yellow(tr("≥5 неудач"))
+        print(tr('  {p0} {p1}  {p2}  {p3}  логины: {p4}', p0=format(bold(f[2]), '<20'), p1=red(f[1] + tr(' попыт.')), p2=mark, p3=dim(tr('последняя ') + t(f[4])), p4=' '.join(f[5:])[:80]))
+    print("\n" + bold(tr("Неудачные входы по пользователям")) + dim(tr("  (без IP)")))
     for f in [f for f in rows if f[0] == "USER"] or [None]:
         if not f: print("  " + dim("—")); break
-        print(f"  {bold(f[2]):<20} {f[1]} попыт.  {dim('последняя ' + t(f[3]))}")
+        print(tr('  {p0} {p1} попыт.  {p2}', p0=format(bold(f[2]), '<20'), p1=f[1], p2=dim(tr('последняя ') + t(f[3]))))
 
 def parse_history(out):
     """Вывод HISTORY_SH → {раздел: [строки]}."""
@@ -575,32 +1262,32 @@ def show_history(sec):
     keys = dict(l.split(" ", 1) for l in sec.get("KEYS", []) if " " in l)
     t = lambda l: l.split(" ", 1)[0].replace("T", " ")[:16]
     warn_access(sec)
-    print(bold("Входы") + dim("  (кто, когда, чем; без IP)"))
+    print(bold(tr("Входы")) + dim(tr("  (кто, когда, чем; без IP)")))
     for l in sec.get("LOGINS", []) or [dim("—")]:
         m = re.search(r"Accepted (\S+) for (\S+)", l)
         if not m: print("  " + l); continue
         fp = re.search(r"(SHA256:\S+)", l)
         nick = keys.get(fp.group(1), "-") if fp else "-"
-        how = {"publickey": "ключ", "password": "пароль"}.get(m.group(1), m.group(1))
+        how = {"publickey": tr("ключ"), "password": tr("пароль")}.get(m.group(1), m.group(1))
         who = (cyan(nick) if nick != "-" else dim(fp.group(1)[:20] + "…")) if fp else ""
         print(f"  {dim(t(l))}  {bold(m.group(2))}  {how} {who}")
-    print("\n" + bold("sudo-команды"))
+    print("\n" + bold(tr("sudo-команды")))
     for l in sec.get("SUDO", []) or [dim("—")]:
         m = re.search(r":\s+(\S+) : .*?USER=(\S+) ; COMMAND=(.*)", l)
         print(f"  {dim(t(l))}  {bold(m.group(1))} → {m.group(2)}: {m.group(3)}" if m else "  " + l)
-    print("\n" + bold("Смены пользователя (su)"))
+    print("\n" + bold(tr("Смены пользователя (su)")))
     for l in sec.get("SU", []) or [dim("—")]: print(f"  {dim(t(l))}  {l.split(': ', 1)[-1]}" if ": " in l else "  " + l)
-    print("\n" + bold("Пакеты"))
+    print("\n" + bold(tr("Пакеты")))
     for l in sec.get("PKG", []) or [dim("—")]: print("  " + l)
-    print("\n" + bold("Изменённые файлы /etc"))
+    print("\n" + bold(tr("Изменённые файлы /etc")))
     for l in sec.get("ETC", []) or [dim("—")]: print("  " + l)
 
 # auditd (2.2): запись всех запущенных команд с исходным пользователем входа (auid) — видно и после sudo -i/su.
 # Включение: копия /etc/audit, прежнее состояние службы, свои правила в отдельном файле; выключение — откат.
-_AUDIT_PRE = ('S=""; [ "$(id -u)" = 0 ] || S=sudo; '
+_AUDIT_PRE = (tr('S=""; [ "$(id -u)" = 0 ] || S=sudo; '
               'command -v auditctl >/dev/null 2>&1 || { echo "auditd не установлен. Установите: '
-              'apt install auditd | dnf install audit | pacman -S audit"; exit 3; }; ')
-AUDIT_ON_CMD = _AUDIT_PRE + """$S sh -c 'set -e
+              'apt install auditd | dnf install audit | pacman -S audit"; exit 3; }; '))
+AUDIT_ON_CMD = _AUDIT_PRE + tr("""$S sh -c 'set -e
 B=/var/lib/ssh-storage; mkdir -p $B
 [ -f $B/auditd.prev ] || { systemctl is-active auditd >/dev/null 2>&1 && echo active || echo inactive; } > $B/auditd.prev
 tar czf $B/audit-backup-$(date +%Y%m%d%H%M%S).tgz -C /etc audit
@@ -609,8 +1296,8 @@ printf "%s\\n" "-a always,exit -F arch=b64 -S execve -F auid!=4294967295 -k ssh-
 systemctl enable --now auditd
 augenrules --load >/dev/null 2>&1 || auditctl -R /etc/audit/rules.d/ssh-storage.rules >/dev/null
 auditctl -l | grep -q ssh-storage
-echo "✓ запись команд включена"'"""
-AUDIT_OFF_CMD = _AUDIT_PRE + """$S sh -c 'B=/var/lib/ssh-storage
+echo "✓ запись команд включена"'""")
+AUDIT_OFF_CMD = _AUDIT_PRE + tr("""$S sh -c 'B=/var/lib/ssh-storage
 rm -f /etc/audit/rules.d/ssh-storage.rules
 auditctl -D -k ssh-storage >/dev/null 2>&1; augenrules --load >/dev/null 2>&1
 if [ "$(cat $B/auditd.prev 2>/dev/null)" = inactive ]; then
@@ -618,7 +1305,7 @@ if [ "$(cat $B/auditd.prev 2>/dev/null)" = inactive ]; then
   echo "auditd остановлен (был выключен до ssh-storage)"
 fi
 rm -f $B/auditd.prev
-! auditctl -l 2>/dev/null | grep -q ssh-storage && echo "✓ запись команд выключена, правила ssh-storage сняты"'"""
+! auditctl -l 2>/dev/null | grep -q ssh-storage && echo "✓ запись команд выключена, правила ssh-storage сняты"'""")
 
 def audit_history_cmd(start="week-ago", n=100):
     """Команды из auditd: время, исходный пользователь входа → от чьего имени, команда. Форматирует сервер."""
@@ -639,17 +1326,19 @@ RIGHTS_CMD = (
     'else case "$g" in *" sudo "*|*" wheel "*|*" admin "*) r=sudo ;; '
     '*" adm "*|*" systemd-journal "*) r=logs ;; *) r=user ;; esac; fi; echo "RIGHTS=$r"')
 RIGHTS = {  # уровень → (название, ранг)
-    "root": ("root", 4), "sudo-nopw": ("sudo без пароля", 4), "sudo": ("sudo с паролем", 3),
-    "logs": ("доступ к журналам", 2), "user": ("обычный пользователь", 1)}
-NEED = {1: "любые права", 2: "доступ к журналам (группа adm или systemd-journal) или sudo", 3: "root или sudo"}
+    "root": ("root", 4), "sudo-nopw": (tr("sudo без пароля"), 4), "sudo": (tr("sudo с паролем"), 3),
+    "logs": (tr("доступ к журналам"), 2), "user": (tr("обычный пользователь"), 1)}
+NEED = {1: tr("любые права"), 2: tr("доступ к журналам (группа adm или systemd-journal) или sudo"), 3: tr("root или sudo")}
 
 # ---------- файлы ----------
 def save_json(path, obj):
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(obj, f); f.flush(); os.fsync(f.fileno())
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(obj, f); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp): os.unlink(tmp)
 
 def load_json(path, default):
     if os.path.exists(path):
@@ -667,12 +1356,14 @@ def recv_raw(sock):
         buf = b""
         while len(buf) < n:
             ch = sock.recv(n - len(buf))
-            if not ch: raise ConnectionError("соединение закрыто")
+            if not ch: raise ConnectionError(tr("соединение закрыто"))
             buf += ch
         return buf
     n = struct.unpack(">I", exact(4))[0]
-    if n > 1 << 20: raise ConnectionError("слишком большое сообщение")
-    return json.loads(exact(n))
+    if n > 1 << 20: raise ConnectionError(tr("слишком большое сообщение"))
+    obj = json.loads(exact(n))
+    if not isinstance(obj, dict): raise ValueError(tr("ожидался объект сообщения"))
+    return obj
 
 class Chan:
     """Зашифрованный канал с номерами сообщений (защита от повтора/перестановки)."""
@@ -686,9 +1377,11 @@ class Chan:
         other = "p" if self.me == "c" else "c"
         aad = f"{other}{self.rx}".encode(); self.rx += 1
         try:
-            return json.loads(open_sym(self.k, bytes.fromhex(recv_raw(self.sock)["c"]), aad))
-        except (ValueError, KeyError):
-            raise ConnectionError("подделка или чужое устройство — соединение разорвано")
+            obj = json.loads(open_sym(self.k, bytes.fromhex(recv_raw(self.sock)["c"]), aad))
+            if not isinstance(obj, dict): raise ValueError(tr("ожидался объект сообщения"))
+            return obj
+        except (ValueError, KeyError, TypeError):
+            raise ConnectionError(tr("подделка или чужое устройство — соединение разорвано"))
     def call(self, obj):
         with self.lock:
             self.send(obj); return self.recv()
@@ -736,7 +1429,7 @@ def discover():
 
 def find_phone(want_fp=None, mode=None):
     for left in (3, 2, 1, 0):  # Enter — искать снова: введённое до этого не теряется
-        print(dim("Ищу телефон в сети…"))
+        print(dim(tr("Ищу телефон в сети…")))
         for _ in range(3):  # первый проход часто будит Wi-Fi телефона, отвечает он на следующем
             phones = [p for p in discover() if (not want_fp or p["fp"] == want_fp) and (not mode or p["mode"] == mode)]
             if phones: break
@@ -746,9 +1439,9 @@ def find_phone(want_fp=None, mode=None):
             ch = menu([f"{p['name']}  {dim(p['ip'] + '  ' + p['fp'])}" for p in phones])
             if ch.isdigit() and 1 <= int(ch) <= len(phones): return phones[int(ch) - 1]["ip"], TCP_PORT
             return None
-        print(yellow("Телефон не найден (та же сеть Wi-Fi? в кафе устройства бывают изолированы)."))
-        ip = input(blue("IP телефона (виден на его экране), " +
-                        (f"Enter — искать снова (осталось {left}): " if left else "Enter — отмена: "))).strip()
+        print(yellow(tr("Телефон не найден (та же сеть Wi-Fi? в кафе устройства бывают изолированы).")))
+        ip = input(blue(tr("IP телефона (виден на его экране), ") +
+                        (tr('Enter — искать снова (осталось {p0}): ', p0=left) if left else tr("Enter — отмена: ")))).strip()
         if ip: return ip, TCP_PORT
     return None
 
@@ -762,18 +1455,18 @@ def ask(label, default=None, required=True, validate=None):
         hint = dim(f" [{default}]") if default not in (None, "") else ""
         v = input(f"  {cyan(label)}{hint}: ").strip()
         if not v and default is not None: v = str(default)
-        if not v and required: print(red("    обязательное поле")); continue
-        if v and validate and not validate(v): print(red("    неверное значение")); continue
+        if not v and required: print(red(tr("    обязательное поле"))); continue
+        if v and validate and not validate(v): print(red(tr("    неверное значение"))); continue
         return v
 
 FIELDS = ("name", "host", "port", "user", "nick", "id", "added", "pending")
 
 def edit_server(cur=None, servers=()):
     cur = cur or {}
-    s = {"name": ask("Название", cur.get("name")),
-         "host": ask("IP / хост", cur.get("host"), validate=host_ok),
-         "port": int(ask("Порт", cur.get("port", 22), validate=port_ok)),
-         "user": ask("Пользователь", cur.get("user", "root"), validate=user_ok)}
+    s = {"name": ask(tr("Название"), cur.get("name")),
+         "host": ask(tr("IP / хост"), cur.get("host"), validate=host_ok),
+         "port": int(ask(tr("Порт"), cur.get("port", 22), validate=port_ok)),
+         "user": ask(tr("Пользователь"), cur.get("user", "root"), validate=user_ok)}
     # подпись ключа на сервере: ssh-storage-phone:<имя>:<ID>:<дата>; ID и дата — при создании, дальше не меняются
     s["nick"] = pick_nick(cur, servers)
     return dict(s, id=cur["id"], added=cur["added"]) if cur.get("id") else new_id(s)
@@ -782,15 +1475,15 @@ def pick_nick(cur, servers):
     """Имя (обязательно): при изменении — текущее, иначе последнее использованное, или новое."""
     last = next((x["nick"] for x in reversed(servers) if x.get("nick")), None)
     opts = []
-    if cur.get("nick"): opts.append((f"Оставить «{cur['nick']}»", cur["nick"]))
-    if last and last != cur.get("nick"): opts.append((f"Последнее: «{last}»", last))
-    if not opts: return ask("Имя (латиница, цифры, _ -; видно в подписи ключа на сервере)",
+    if cur.get("nick"): opts.append((tr('Оставить «{p0}»', p0=cur['nick']), cur["nick"]))
+    if last and last != cur.get("nick"): opts.append((tr('Последнее: «{p0}»', p0=last), last))
+    if not opts: return ask(tr("Имя (латиница, цифры, _ -; видно в подписи ключа на сервере)"),
                             validate=lambda v: re.fullmatch(NICK_RE, v))
-    print(f"  {cyan('Имя (видно в подписи ключа на сервере)')}")
-    opts.append(("Новое имя", ""))
+    print(f"  {cyan(tr('Имя (видно в подписи ключа на сервере)'))}")
+    opts.append((tr("Новое имя"), ""))
     a = menu([o[0] for o in opts], default=1)
     nick = opts[int(a) - 1][1] if a.isdigit() and 1 <= int(a) <= len(opts) else opts[0][1]
-    if nick == "": nick = ask("Имя (латиница, цифры, _ -)", validate=lambda v: re.fullmatch(NICK_RE, v))
+    if nick == "": nick = ask(tr("Имя (латиница, цифры, _ -)"), validate=lambda v: re.fullmatch(NICK_RE, v))
     return nick
 
 def parse_servers(text):
@@ -802,14 +1495,14 @@ def parse_servers(text):
         s = {"name": f[0], "host": f[1] if len(f) > 1 else "",
              "port": int(f[2]) if len(f) > 2 and port_ok(f[2]) else (22 if len(f) < 3 else -1),
              "user": f[3] if len(f) > 3 else "root"}
-        if len(f) > 4 or not server_ok(s): bad.append(f"строка {n}: «{line.strip()}»")
+        if len(f) > 4 or not server_ok(s): bad.append(tr('строка {p0}: «{p1}»', p0=n, p1=line.strip()))
         else: out.append(s)
     return out, bad
 
 def ssh_config_servers(path="~/.ssh/config"):
     """Хосты из ~/.ssh/config (без шаблонов *?), адрес/порт/пользователь — через ssh -G."""
     path = os.path.expanduser(path)
-    if not os.path.isfile(path): return [], [f"нет файла {path}"]
+    if not os.path.isfile(path): return [], [tr('нет файла {p0}', p0=path)]
     names = []
     for line in open(path, errors="replace"):
         f = line.split()
@@ -823,24 +1516,25 @@ def ssh_config_servers(path="~/.ssh/config"):
     return parse_servers("\n".join(lines))
 
 def confirm_wipe():
-    return input(red("Для подтверждения введите СТЕРЕТЬ: ")).strip().upper() == "СТЕРЕТЬ"
+    word = tr("СТЕРЕТЬ")
+    return input(red(tr("Для подтверждения введите СТЕРЕТЬ: "))).strip().upper() in (word.upper(), "СТЕРЕТЬ")
 
 def first_login():
     """Как один раз зайти на новый сервер, чтобы прописать ключ телефона.
     Возвращает (опции ssh, временная папка для удаления) или (None, None) — отмена.
     Вставленный текстом ключ лежит только в RAM и удаляется сразу после входа."""
-    print("\nКак зайти на сервер " + bold("в первый раз") + " (ключа телефона там ещё нет)?")
-    ch = menu(["Пароль сервера", "SSH-ключ: путь к файлу или вставить текст ключа",
-               "Автоматически (ключи из ~/.ssh и агента)", "Отмена"])
+    print(tr("\nКак зайти на сервер ") + bold(tr("в первый раз")) + tr(" (ключа телефона там ещё нет)?"))
+    ch = menu([tr("Пароль сервера"), tr("SSH-ключ: путь к файлу или вставить текст ключа"),
+               tr("Автоматически (ключи из ~/.ssh и агента)"), tr("Отмена")])
     if ch == "1":
         return ["-o", "PubkeyAuthentication=no", "-o", "PreferredAuthentications=password,keyboard-interactive"], None
     if ch == "3": return [], None
     if ch != "2": return None, None
-    print(dim("Путь к закрытому ключу (например ~/.ssh/id_ed25519) или вставьте ключ целиком,"))
-    print(dim("начиная со строки -----BEGIN … PRIVATE KEY----- (текст ключа на экране не показывается)."))
+    print(dim(tr("Путь к закрытому ключу (например ~/.ssh/id_ed25519) или вставьте ключ целиком,")))
+    print(dim(tr("начиная со строки -----BEGIN … PRIVATE KEY----- (текст ключа на экране не показывается).")))
     key_opts = lambda f: ["-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-i", f]
     while True:
-        first = input(blue("Путь или ключ (Enter — отмена): ")).strip()
+        first = input(blue(tr("Путь или ключ (Enter — отмена): "))).strip()
         if not first: return None, None
         if first.startswith("-----BEGIN") and "PRIVATE KEY" in first:
             lines = [first]
@@ -850,11 +1544,11 @@ def first_login():
             f = os.path.join(tmp, "key")
             with open(os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as fh:
                 fh.write("\n".join(lines) + "\n")
-            print(green(f"✓ Ключ принят ({len(lines)} строк), будет удалён после входа"))
+            print(green(tr('✓ Ключ принят ({p0} строк), будет удалён после входа', p0=len(lines))))
             return key_opts(f), tmp
         path = os.path.expanduser(first)
         if os.path.isfile(path): return key_opts(path), None
-        print(red("✗ Файл не найден (или вставьте ключ, начиная со строки -----BEGIN)"))
+        print(red(tr("✗ Файл не найден (или вставьте ключ, начиная со строки -----BEGIN)")))
 
 def reachable(s, timeout=4):
     """До входа: отвечает ли на host:port именно SSH. Возвращает None (всё в порядке) или причину."""
@@ -865,20 +1559,20 @@ def reachable(s, timeout=4):
     try:
         with socket.create_connection((g.get("hostname", s["host"]), int(g.get("port", s["port"]))), timeout=timeout) as c:
             c.settimeout(timeout)
-            if not c.recv(64).startswith(b"SSH-"): return "не нашёл SSH-сервер на этом порту"
-    except socket.gaierror: return "хост не найден (ошибка в имени или DNS)"
-    except ConnectionRefusedError: return "порт закрыт (SSH не запущен или другой порт)"
-    except (socket.timeout, TimeoutError): return "нет ответа (сервер выключен, файрвол или другая сеть)"
-    except OSError as e: return f"нет связи: {e.strerror or e}"
+            if not c.recv(64).startswith(b"SSH-"): return tr("не нашёл SSH-сервер на этом порту")
+    except socket.gaierror: return tr("хост не найден (ошибка в имени или DNS)")
+    except ConnectionRefusedError: return tr("порт закрыт (SSH не запущен или другой порт)")
+    except (socket.timeout, TimeoutError): return tr("нет ответа (сервер выключен, файрвол или другая сеть)")
+    except OSError as e: return tr('нет связи: {p0}', p0=e.strerror or e)
     return None
 
 def check_reach(s):
     """Проверить доступность с понятным сообщением; при недоступности спросить, продолжать ли."""
-    print(dim(f"Проверяю {s['host']}:{s['port']}…"), end=" ", flush=True)
+    print(dim(tr('Проверяю {p0}:{p1}…', p0=s['host'], p1=s['port'])), end=" ", flush=True)
     why = reachable(s)
-    if not why: print(green("✓ SSH отвечает")); return True
+    if not why: print(green(tr("✓ SSH отвечает"))); return True
     print(red(f"✗ {why}"))
-    return yes(yellow("Всё равно продолжить?"))
+    return yes(yellow(tr("Всё равно продолжить?")))
 
 def server_ok(s):
     return isinstance(s, dict) and host_ok(str(s.get("host", ""))) and user_ok(str(s.get("user", ""))) \
@@ -889,7 +1583,7 @@ def server_ok(s):
 
 server_line = lambda s: f"{bold(s['name'])}  {dim(s['user'] + '@' + s['host'] + ':' + str(s['port']))}" \
     + (f"  {cyan(s['nick'])}" if s.get("nick") else "") + (dim(f"  #{s['id']}") if s.get("id") else "") \
-    + (red("  [ключи не установлены]") if s.get("pending") else "")
+    + (red(tr("  [ключи не установлены]")) if s.get("pending") else "")
 
 # =====================================================================
 #                              ТЕЛЕФОН
@@ -908,18 +1602,18 @@ class Keystore:
 
     def ensure(self):
         if self.ALIAS not in self._list():
-            print(dim("Создаю ключ в Android Keystore…"))
+            print(dim(tr("Создаю ключ в Android Keystore…")))
             subprocess.run(["termux-keystore", "generate", self.ALIAS, "-a", "EC", "-s", "256"],
                            capture_output=True, timeout=60)
         k = self._list().get(self.ALIAS)
-        if not k or "x" not in k: raise RuntimeError("Keystore не создал ключ")
+        if not k or "x" not in k: raise RuntimeError(tr("Keystore не создал ключ"))
         self.blob = ecdsa_blob(int(k["x"], 16), int(k["y"], 16))
         self.hardware = k.get("inside_secure_hardware")
 
     def sign(self, data):
         r = subprocess.run(["termux-keystore", "sign", self.ALIAS, "SHA256withECDSA"],
                            input=data, capture_output=True, timeout=60)
-        if r.returncode or not r.stdout: raise RuntimeError("Keystore не подписал")
+        if r.returncode or not r.stdout: raise RuntimeError(tr("Keystore не подписал"))
         return r.stdout  # DER
 
     def line(self):
@@ -952,9 +1646,9 @@ class Phone:
         srv.bind(("", TCP_PORT)); srv.listen(4)
         try:
             while True:
-                what = "сопряжения" if mode == "pair" else "запросы компьютера"
-                print(cyan(f"Жду {what}…  IP: {bold(local_ip())}"))
-                print(dim("Ctrl+C — назад\n"))
+                what = tr("сопряжения") if mode == "pair" else tr("запросы компьютера")
+                print(cyan(tr('Жду {p0}…  IP: {p1}', p0=what, p1=bold(local_ip()))))
+                print(dim(tr("Ctrl+C — назад\n")))
                 while True:
                     conn, _ = srv.accept()
                     conn.settimeout(5)  # молчащий клиент не занимает телефон
@@ -973,7 +1667,7 @@ class Phone:
                         self.session(conn, msg)
                         if getattr(self, "restart", False):  # новая версия уже на месте — запускаем её
                             conn.close(); srv.close()
-                            print(dim("Перезапуск…")); os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), "--install"])
+                            print(dim(tr("Перезапуск…"))); os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), "--install"])
                 except (ConnectionError, OSError, ValueError, KeyError, TypeError, IndexError, RuntimeError) as e:
                     print(red(f"✗ {e}\n"))
                 finally:
@@ -985,19 +1679,19 @@ class Phone:
 
     def pair(self, conn, msg):
         cpub, commit = bytes.fromhex(msg["pub"]), bytes.fromhex(msg["commit"])
-        name = str(msg.get("name", "компьютер"))[:40]
+        name = str(msg.get("name", tr("компьютер")))[:40]
         nP = secrets.token_bytes(32)
         send_raw(conn, {"pub": self.pub.hex(), "n": nP.hex()})
         nC = bytes.fromhex(recv_raw(conn)["n"])
         if not hmac.compare_digest(H(b"commit", nC), commit):
-            raise ConnectionError("нарушен протокол — возможна атака")
-        header("сопряжение")
-        print(f"  Компьютер: {bold(name)}  {dim(fingerprint(cpub))}\n")
-        print(f"  Введите на компьютере код:  {mag(bold(sas(cpub, self.pub, nC, nP)))}\n")
-        ok = yes(blue("Компьютер написал «✓ Код верный»?"))
+            raise ConnectionError(tr("нарушен протокол — возможна атака"))
+        header(tr("сопряжение"))
+        print(tr('  Компьютер: {p0}  {p1}\n', p0=bold(name), p1=dim(fingerprint(cpub))))
+        print(tr('  Введите на компьютере код:  {p0}\n', p0=mag(bold(sas(cpub, self.pub, nC, nP)))))
+        ok = yes(blue(tr("Компьютер написал «✓ Код верный»?")))
         send_raw(conn, {"ok": ok})
         if not ok or not recv_raw(conn).get("ok"):
-            print(red("✗ Сопряжение отменено")); pause(); return False
+            print(red(tr("✗ Сопряжение отменено"))); pause(); return False
         ch = Chan(conn, H(b"pair", x25519(self.priv, cpub), nC, nP), "p")
         rec = ch.recv()["recovery"]
         if rec and not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+ " + RECOVERY_TAG, rec): raise ValueError("bad recovery")
@@ -1005,14 +1699,14 @@ class Phone:
         self.d["peers"] = {cpub.hex(): {"name": name}}
         self.d["recovery"] = rec
         self.save()
-        print(green(f"\n✓ Сопряжено с «{name}»")); pause()
+        print(green(tr('\n✓ Сопряжено с «{p0}»', p0=name))); pause()
         return True
 
     def session(self, conn, msg):
         cpub = bytes.fromhex(msg["id"])
         peer = self.d["peers"].get(cpub.hex())
         if not peer:
-            print(yellow("Запрос от незнакомого компьютера — отклонён.\n")); return
+            print(yellow(tr("Запрос от незнакомого компьютера — отклонён.\n"))); return
         ce = bytes.fromhex(msg["e"])
         pe_priv = secrets.token_bytes(32); pe = pubkey(pe_priv)
         send_raw(conn, {"e": pe.hex()})
@@ -1020,22 +1714,23 @@ class Phone:
         ch = Chan(conn, k, "p")
         hello = ch.recv()
         intent, danger = str(hello.get("intent", "?"))[:120], bool(hello.get("danger"))
-        print(bell() + bold(f"🔔 «{peer['name']}»: {intent}"))
-        if danger: print(red(bold("   ⚠ ОПАСНОЕ ДЕЙСТВИЕ — подтверждайте, только если запускали его сами.")))
-        print(f"   Код сеанса:  {mag(bold(session_code(k)))}")
-        print(dim("   Разрешайте, только если на компьютере тот же код."))
-        allow = yes(blue("Код совпадает, разрешить?"))
+        print(bell() + bold(tr('Запрос от «{p0}»: {p1}', p0=peer['name'], p1=intent)))
+        if danger: print(red(bold(tr("   ⚠ ОПАСНОЕ ДЕЙСТВИЕ — подтверждайте, только если запускали его сами."))))
+        print(tr('   Код сеанса:  {p0}', p0=mag(bold(session_code(k)))))
+        print(dim(tr("   Разрешайте, только если на компьютере тот же код.")))
+        allow = yes(blue(tr("Код совпадает, разрешить?")))
         ch.send({"allow": allow})
         pc = peer["name"]
         self.log(pc, intent, "разрешено" if allow else "отклонено")
         if not allow: print(); return
         signs, signed, target, approved, to_delete, pending, upd = 0, False, None, set(), [], None, None
+        sign_user = None
         while True:
             try: m = ch.recv()
             except (ConnectionError, OSError):
                 if pending and pending["ks"]:  # перевыпуск не завершён — новый ключ не нужен
                     subprocess.run(["termux-keystore", "delete", pending["ks"].ALIAS], capture_output=True, timeout=30)
-                print(dim("  сеанс завершён\n")); return
+                print(dim(tr("  сеанс завершён\n"))); return
             t = m.get("t")
             if t == "list":
                 ch.send({"servers": self.d["servers"], "line": self.ks.line(), "recovery": self.d["recovery"],
@@ -1045,8 +1740,8 @@ class Phone:
                 theirs, size = str(m.get("v", "")), m.get("size")
                 if (m.get("sha") != hashlib.sha256(data).hexdigest() and isinstance(size, int) and 0 < size <= UPD_MAX
                         and ver_key(theirs) >= ver_key(VERSION)):
-                    print(yellow(f"  На компьютере «{pc}» другая версия программы: {theirs or '?'} (на телефоне {VERSION})."))
-                    if yes(blue("  Обновить телефон? Да — если вы сами обновляли программу на компьютере."), True):
+                    print(yellow(tr('  На компьютере «{p0}» другая версия программы: {p1} (на телефоне {p2}).', p0=pc, p1=theirs or '?', p2=VERSION)))
+                    if yes(blue(tr("  Обновить телефон? Да — если вы сами обновляли программу на компьютере.")), True):
                         upd = {"sha": m.get("sha"), "size": size, "buf": bytearray()}
                 ch.send({"ok": True, "want": upd is not None, "v": VERSION})
             elif t == "update_part":
@@ -1065,10 +1760,10 @@ class Phone:
                     with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
                         f.write(upd["buf"]); f.flush(); os.fsync(f.fileno())
                     os.chmod(tmp, 0o400); os.replace(tmp, me)
-                    self.log(pc, "обновление программы", "выполнен"); self.restart = True
-                    print(green("  ✓ Программа обновлена — перезапущу после сеанса"))
+                    self.log(pc, tr("обновление программы"), "выполнен"); self.restart = True
+                    print(green(tr("  ✓ Программа обновлена — перезапущу после сеанса")))
                 elif upd is not None or m.get("sha"):
-                    print(red("  ✗ Обновление не прошло проверку — оставлена старая версия"))
+                    print(red(tr("  ✗ Обновление не прошло проверку — оставлена старая версия")))
                 upd = None
                 ch.send({"ok": ok})
             elif t == "members":
@@ -1084,14 +1779,14 @@ class Phone:
                 new_rec = m.get("recovery")
                 if pending or new_rec and not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+ " + RECOVERY_TAG, new_rec):
                     ch.send({"ok": False}); continue
-                what = ", ".join(w for w, on in (("ключ телефона", m.get("phone")), ("резервный ключ", new_rec)) if on)
+                what = ", ".join(w for w, on in ((tr("ключ телефона"), m.get("phone")), (tr("резервный ключ"), new_rec)) if on)
                 if not what: ch.send({"ok": False}); continue
-                print(red(bold(f"  ⚠ Перевыпуск: {what} — на всех серверах ({len(self.d['servers'])})")))
-                if m.get("wipe"): print(red("  ⚠ Затереть: на серверах останутся только ключи ssh-storage этого телефона"))
+                print(red(bold(tr('  ⚠ Перевыпуск: {p0} — на всех серверах ({p1})', p0=what, p1=len(self.d['servers'])))))
+                if m.get("wipe"): print(red(tr("  ⚠ Затереть: на серверах останутся только ключи ssh-storage этого телефона")))
                 for w in m.get("warn", [])[:20]: print(yellow("    ⚠ " + str(w)[:120]))
-                if new_rec: print(yellow("  Старый резервный пароль перестанет работать."))
-                ok = yes(red("  Перевыпустить?"))
-                self.log(pc, f"перевыпуск: {what}" + (", затереть" if m.get("wipe") else ""),
+                if new_rec: print(yellow(tr("  Старый резервный пароль перестанет работать.")))
+                ok = yes(red(tr("  Перевыпустить?")))
+                self.log(pc, tr('перевыпуск: {p0}', p0=what) + (tr(", затереть") if m.get("wipe") else ""),
                          "разрешено" if ok else "отклонено")
                 if not ok: ch.send({"ok": False}); continue
                 nks = None
@@ -1108,54 +1803,63 @@ class Phone:
                 if pending["ks"]:
                     subprocess.run(["termux-keystore", "delete", old.ALIAS], capture_output=True, timeout=30)
                 pending = None
-                self.log(pc, "перевыпуск: новые ключи действуют", "выполнен")
-                print(green("  ✓ новые ключи действуют"))
+                self.log(pc, tr("перевыпуск: новые ключи действуют"), "выполнен")
+                print(green(tr("  ✓ новые ключи действуют")))
                 ch.send({"ok": True})
             elif t == "journal":
                 ch.send({"log": self.d.get("log", [])})
             elif t == "use":
-                s = self.d["servers"][int(m["i"])]
-                signs = 3; conn.settimeout(60); target = s['name']
-                print(green(f"  → вход на {s['name']} ({s['user']}@{s['host']})"))
-                ch.send({"ok": True})
+                signs, sign_user = 0, None
+                i = m.get("i")
+                if type(i) is not int or not 0 <= i < len(self.d["servers"]):
+                    ch.send({"ok": False}); continue
+                s = self.d["servers"][i]
+                ok = yes(blue(tr('  Разрешить вход на {p0} ({p1}@{p2}:{p3})?', p0=s['name'], p1=s['user'], p2=s['host'], p3=s['port'])))
+                if ok:
+                    signs, sign_user, signed = 3, s["user"], False
+                    conn.settimeout(60); target = s['name']
+                ch.send({"ok": ok})
             elif t == "sign":
                 if signs <= 0: ch.send({"ok": False}); continue
                 signs -= 1
-                ch.send({"ok": True, "sig": self.ks.sign(bytes.fromhex(m["data"])).hex()})
+                data = bytes.fromhex(m["data"])
+                if not valid_sign_request(data, sign_user, self.ks.blob):
+                    ch.send({"ok": False}); continue
+                ch.send({"ok": True, "sig": self.ks.sign(data).hex()})
                 if not signed:
                     # сервер просит подпись только если уже согласился принять ключ телефона
-                    print(green("  ✓ сервер принял ключ телефона — подпись выдана"))
+                    print(green(tr("  ✓ сервер принял ключ телефона — подпись выдана")))
                     signed = True; conn.settimeout(12 * 3600)  # ждём итог, пока идёт сеанс
             elif t == "add_many":
                 sv = [x for x in m["servers"] if server_ok(x)]
-                print(yellow(f"  Добавить серверы ({len(sv)}):"))
+                print(yellow(tr('  Добавить серверы ({p0}):', p0=len(sv))))
                 for x in sv: print("    " + server_line(x))
-                ok = yes(blue("  Разрешить добавление всех?"), True)
+                ok = yes(blue(tr("  Разрешить добавление всех?")), True)
                 if ok: approved = {(x["host"], x["port"], x["user"]) for x in sv}
-                self.log(pc, f"добавить серверы ({len(sv)})", "разрешено" if ok else "отклонено")
+                self.log(pc, tr('добавить серверы ({p0})', p0=len(sv)), "разрешено" if ok else "отклонено")
                 ch.send({"ok": ok})
             elif t == "delete_many":
                 sv = [x for x in m["servers"] if x in self.d["servers"]]
-                how = "из списка и снять ключи с серверов" if m.get("keys") else "только из списка"
-                print(red(f"  Удалить серверы ({len(sv)}), {how}:"))
+                how = tr("из списка и снять ключи с серверов") if m.get("keys") else tr("только из списка")
+                print(red(tr('  Удалить серверы ({p0}), {p1}:', p0=len(sv), p1=how)))
                 for x in sv: print("    " + server_line(x))
-                ok = bool(sv) and yes(red("  Удалить?"))
+                ok = bool(sv) and yes(red(tr("  Удалить?")))
                 to_delete = sv if ok else []
-                self.log(pc, f"удалить серверы ({len(sv)}), {how}", "разрешено" if ok else "отклонено")
+                self.log(pc, tr('удалить серверы ({p0}), {p1}', p0=len(sv), p1=how), "разрешено" if ok else "отклонено")
                 ch.send({"ok": ok})
             elif t == "delete_done":
                 # удаляем только одобренные в delete_many
                 gone = [x for x in m["servers"] if x in to_delete and x in self.d["servers"]]
                 to_delete = []  # одобрение одноразовое
                 self.d["servers"] = [x for x in self.d["servers"] if x not in gone]; self.save()
-                for x in gone: self.log(pc, "удалить сервер", "выполнен", x["name"])
-                print(green(f"  ✓ удалено из списка: {len(gone)}"))
+                for x in gone: self.log(pc, tr("удалить сервер"), "выполнен", x["name"])
+                print(green(tr('  ✓ удалено из списка: {p0}', p0=len(gone))))
                 ch.send({"ok": True, "n": len(gone)})
             elif t == "add":
                 s = m["server"]
                 if not server_ok(s): ch.send({"ok": False}); continue
-                ok = (s["host"], s["port"], s["user"]) in approved or yes(blue(f"  Добавить сервер «{s['name']}» ({s['user']}@{s['host']}:{s['port']})?"), True)
-                self.log(pc, "добавить сервер", "разрешено" if ok else "отклонено", s["name"])
+                ok = (s["host"], s["port"], s["user"]) in approved or yes(blue(tr('  Добавить сервер «{p0}» ({p1}@{p2}:{p3})?', p0=s['name'], p1=s['user'], p2=s['host'], p3=s['port'])), True)
+                self.log(pc, tr("добавить сервер"), "разрешено" if ok else "отклонено", s["name"])
                 ch.send({"ok": ok, "line": self.ks.line(), "recovery": self.d["recovery"]})
             elif t in ("edit", "delete"):
                 i, old, sv = int(m["i"]), m.get("old"), self.d["servers"]
@@ -1163,26 +1867,26 @@ class Phone:
                 if t == "edit":
                     new = m["server"]
                     if not server_ok(new): ch.send({"ok": False}); continue
-                    print(yellow(f"  Изменить сервер с компьютера:"))
+                    print(yellow(tr('  Изменить сервер с компьютера:')))
                     for k in FIELDS:
                         o, n = old.get(k, "—"), new.get(k, "—")
-                        mark = bold(yellow("→ " + str(n))) if n != o else dim("без изменений")
+                        mark = bold(yellow("→ " + str(n))) if n != o else dim(tr("без изменений"))
                         print(f"    {k:5} {o}  {mark}")
-                    ok = yes(blue("  Сохранить?"), True)
+                    ok = yes(blue(tr("  Сохранить?")), True)
                     if ok: sv[i] = {k: new[k] for k in FIELDS if k in new}; self.save()
                 else:
-                    ok = yes(red(f"  Удалить «{old['name']}» ({old['user']}@{old['host']}) из списка?"))
+                    ok = yes(red(tr('  Удалить «{p0}» ({p1}@{p2}) из списка?', p0=old['name'], p1=old['user'], p2=old['host'])))
                     if ok: sv.pop(i); self.save()
-                self.log(pc, "изменить сервер" if t == "edit" else "удалить сервер",
+                self.log(pc, tr("изменить сервер") if t == "edit" else tr("удалить сервер"),
                          "разрешено" if ok else "отклонено", old["name"])
-                print(green("  ✓ сохранено") if ok else dim("  отменено"))
+                print(green(tr("  ✓ сохранено")) if ok else dim(tr("  отменено")))
                 ch.send({"ok": ok})
             elif t == "result":
                 # сообщает компьютер — только для информации, телефон ничего на этом не разрешает
-                self.log(pc, "вход", "выполнен" if m.get("ok") else "не удался", target or "")
-                if m.get("ok"): print(green(f"  ✓ вход на «{target}» выполнен, сеанс закрыт"))
-                elif not signed: print(red(f"  ✗ вход на «{target}» не удался: сервер не принял ключ телефона или нет связи"))
-                else: print(red(f"  ✗ вход на «{target}» не удался"))
+                self.log(pc, tr("вход"), "выполнен" if m.get("ok") else "не удался", target or "")
+                if m.get("ok"): print(green(tr('  ✓ вход на «{p0}» выполнен, сеанс закрыт', p0=target)))
+                elif not signed: print(red(tr('  ✗ вход на «{p0}» не удался: сервер не принял ключ телефона или нет связи', p0=target)))
+                else: print(red(tr('  ✗ вход на «{p0}» не удался', p0=target)))
                 ch.send({"ok": True})
             elif t == "added":
                 s = m["server"]
@@ -1190,7 +1894,7 @@ class Phone:
                     self.d["servers"] = [x for x in self.d["servers"]
                                          if (x["host"], x["port"], x["user"]) != (s["host"], s["port"], s["user"])]
                     self.d["servers"].append(s); self.save()
-                    print(green(f"  ✓ сервер «{s['name']}» сохранён"))
+                    print(green(tr('  ✓ сервер «{p0}» сохранён', p0=s['name'])))
                 ch.send({"ok": True})
             else:
                 ch.send({"ok": False})
@@ -1198,70 +1902,69 @@ class Phone:
     # --- редактирование на телефоне ---
     def servers_menu(self):
         while True:
-            header("серверы")
+            header(tr("серверы"))
             sv = self.d["servers"]
             adm = self.d["recovery"] != ""  # у участника команды (recovery == "") отзыва нет — это делает админ
-            extra = [green("+ Добавить вручную")] + ([red("Отозвать участника (снять ключи)")] if adm else [])
-            ch = menu([server_line(s) for s in sv] + extra + [dim("Назад")], default=len(sv) + len(extra) + 1)
+            extra = [green(tr("+ Добавить вручную"))] + ([red(tr("Отозвать участника (снять ключи)"))] if adm else [])
+            ch = menu([server_line(s) for s in sv] + extra + [dim(tr("Назад"))], default=len(sv) + len(extra) + 1)
             if ch == str(len(sv) + len(extra) + 1): return
             if adm and ch == str(len(sv) + 2): self.revoke_member()
             elif ch == str(len(sv) + 1):
-                header("новый сервер"); s = dict(edit_server(servers=sv), pending=True)
+                header(tr("новый сервер")); s = dict(edit_server(servers=sv), pending=True)
                 sv.append(s); self.save(); self.show_cmd(s)
             elif ch.isdigit() and 1 <= int(ch) <= len(sv):
                 i = int(ch) - 1
                 header(sv[i]["name"])
-                a = menu(["Подключиться", "Изменить", "Команда установки для сервера", "Удалить",
-                          "Туннель к веб-панели (3x-ui и др.)", "Назад"], default=1)
+                a = menu([tr("Подключиться"), tr("Изменить"), tr("Команда установки для сервера"), tr("Удалить"),
+                          tr("Туннель к веб-панели (3x-ui и др.)"), tr("Назад")], default=1)
                 if a == "1": clear(); self.ssh(sv[i])
                 elif a == "5":
-                    port = int(ask("Порт панели на сервере", 2053, validate=port_ok))
-                    print(green(f"Откройте в браузере телефона http://127.0.0.1:{port}/  Ctrl+C — закрыть."))
-                    print(yellow("Пока туннель открыт, порт доступен и другим приложениям телефона — закройте сразу после работы."))
+                    port = int(ask(tr("Порт панели на сервере"), 2053, validate=port_ok))
+                    print(green(tr('Откройте в браузере телефона http://127.0.0.1:{p0}/  Ctrl+C — закрыть.', p0=port)))
+                    print(yellow(tr("Пока туннель открыт, порт доступен и другим приложениям телефона — закройте сразу после работы.")))
                     try: self.ssh(sv[i], opts=("-N", "-L", f"127.0.0.1:{port}:127.0.0.1:{port}"))
                     except KeyboardInterrupt: pass
-                elif a == "2": header("изменить"); sv[i] = dict(edit_server(sv[i], sv), **({"pending": True} if sv[i].get("pending") else {})); self.save()
+                elif a == "2": header(tr("изменить")); sv[i] = dict(edit_server(sv[i], sv), **({"pending": True} if sv[i].get("pending") else {})); self.save()
                 elif a == "3": self.show_cmd(sv[i])
-                elif a == "4" and yes(red(f"Удалить «{sv[i]['name']}» из списка?")):
+                elif a == "4" and yes(red(tr('Удалить «{p0}» из списка?', p0=sv[i]['name']))):
                     sv.pop(i); self.save()
 
     def ssh(self, s, *cmd, opts=()):
         """Вход прямо с телефона: тот же агент, что и на ПК, но подписывает свой Keystore."""
-        if not shutil.which(SSH): print(red("Нет ssh: выполните pkg install openssh")); pause(); return 255
+        if not shutil.which(SSH): print(red(tr("Нет ssh: выполните pkg install openssh"))); pause(); return 255
         a = Agent(self.ks.blob, lambda d: ecdsa_sig(self.ks.sign(d)))
         try: return subprocess.call(ssh_cmd(s, "-o", f"IdentityAgent={a.path}", "-o", "IdentitiesOnly=yes",
                                             "-i", a.pubfile(), *(["-t"] if cmd else []), *opts) + list(cmd))
         finally: a.close()
 
     def revoke_member(self):
-        header("отозвать участника")
+        header(tr("отозвать участника"))
         sv = [x for x in self.d["servers"] if server_ok(x) and not x.get("pending")]
         known = self.d.get("members", [])
-        if not sv: print(yellow("Список серверов пуст.")); pause(); return
+        if not sv: print(yellow(tr("Список серверов пуст."))); pause(); return
         for n, k in enumerate(known, 1): print(f"  {n}. {k}")
-        nick = ask("Ник участника (или номер)", validate=lambda v: bool(re.fullmatch(NICK_RE, v)) or v.isdigit() and 1 <= int(v) <= len(known))
+        nick = ask(tr("Ник участника (или номер)"), validate=lambda v: bool(re.fullmatch(NICK_RE, v)) or v.isdigit() and 1 <= int(v) <= len(known))
         if nick.isdigit() and 1 <= int(nick) <= len(known): nick = known[int(nick) - 1]
-        sv = pick_many(sv, "Где отозвать")
+        sv = pick_many(sv, tr("Где отозвать"))
         if not sv: return
-        print(yellow(f"\nУчастник {nick}: ключи снять, вход заблокировать, сеансы закрыть на: {', '.join(x['name'] for x in sv)}. "
-                     "Полное удаление — с компьютера."))
-        if not yes(red("Отозвать?")): return
+        print(yellow(tr('\nУчастник {p0}: ключи снять, вход заблокировать, сеансы закрыть на: {p1}. Полное удаление — с компьютера.', p0=nick, p1=', '.join(x['name'] for x in sv))))
+        if not yes(red(tr("Отозвать?"))): return
         res = []
         for x in sv:
             print(bold(f"\n→ {x['name']}"))
-            res.append((x, {0: "снято", 3: "участника не было"}.get(self.ssh(x, "sh -c " + shlex.quote(revoke_cmd(nick))))))
-        self.log("телефон", f"отзыв {nick}", "выполнен" if all(w for _, w in res) else "не удался", "")
-        header(f"итог отзыва · {nick}")
-        for x, w in res: print(f"  {server_line(x)}  " + (green(w) if w else red("не выполнено — повторите")))
+            res.append((x, {0: tr("снято"), 3: tr("участника не было")}.get(self.ssh(x, "sh -c " + shlex.quote(revoke_cmd(nick))))))
+        self.log(tr("телефон"), tr('отзыв {p0}', p0=nick), "выполнен" if all(w for _, w in res) else "не удался", "")
+        header(tr('итог отзыва · {p0}', p0=nick))
+        for x, w in res: print(f"  {server_line(x)}  " + (green(w) if w else red(tr("не выполнено — повторите"))))
         pause()
 
     def show_cmd(self, s):
-        header("установка на сервер")
+        header(tr("установка на сервер"))
         if self.d["recovery"] is None:
-            print(yellow("Сначала сопряжение с компьютером (там создаётся резервный пароль).")); pause(); return
-        print(f"Выполните на сервере {bold(s['user'] + '@' + s['host'])} (консоль хостинга или текущий вход):\n")
+            print(yellow(tr("Сначала сопряжение с компьютером (там создаётся резервный пароль)."))); pause(); return
+        print(tr('Выполните на сервере {p0} (консоль хостинга или текущий вход):\n', p0=bold(s['user'] + '@' + s['host'])))
         print(cyan(install_cmd(with_nick(self.ks.line(), server_tag(s)), self.d["recovery"])) + "\n")
-        print(dim("Проще: на компьютере ssh-storage → «Серверы» → «Добавить сервер» сделает это сам."))
+        print(dim(tr("Проще: на компьютере ssh-storage → «Серверы» → «Добавить сервер» сделает это сам.")))
         pause()
 
 # Команда ssh-storage — файл в $PREFIX/bin Termux: работает сразу, в любой оболочке, без root
@@ -1283,68 +1986,69 @@ def phone_install():
     with open(PHONE_BIN, "w") as f:
         f.write(f"#!{os.path.dirname(PHONE_BIN)}/sh\nexec python {shlex.quote(me)} \"$@\"\n")
     os.chmod(PHONE_BIN, 0o755)
-    print(green("✓ Установлено. Дальше на телефоне команда ") + bold("ssh-storage"))
+    print(green(tr("✓ Установлено. Дальше на телефоне команда ")) + bold("ssh-storage"))
     pause()
 
 def phone_main():
     if "--install" in sys.argv: phone_install()
     if not Keystore.available():
-        print(red("Нет termux-keystore."))
-        print("Установите приложение " + bold("Termux:API") + " из F-Droid и выполните: " + bold("pkg install termux-api"))
+        print(red(tr("Нет termux-keystore.")))
+        print(tr("Установите приложение ") + bold("Termux:API") + tr(" из F-Droid и выполните: ") + bold("pkg install termux-api"))
         sys.exit(1)
     ks = Keystore()
     ph = Phone(ks); ks.ensure()
     while True:
-        header("телефон")
-        print(f"  {dim('отпечаток')}  {fingerprint(ph.pub)}")
+        header(tr("телефон"))
+        print(f"  {dim(tr('отпечаток'))}  {fingerprint(ph.pub)}")
         print(f"  {dim('IP')}         {local_ip()}")
-        print(f"  {dim('ключ SSH')}   " + (green("в защищённом чипе") if ph.ks.hardware else yellow("в Keystore (без отдельного чипа)")))
+        print(f"  {dim(tr('ключ SSH'))}   " + (green(tr("в защищённом чипе")) if ph.ks.hardware else yellow(tr("в Keystore (без отдельного чипа)"))))
         peers = ph.d["peers"]
-        for p in peers.values(): print(f"  {dim('сопряжён')}   {green(p['name'])}")
-        if not peers: print(f"  {yellow('не сопряжён')}")
-        print(f"  {dim('серверов')}   {len(ph.d['servers'])}\n")
+        for p in peers.values(): print(f"  {dim(tr('сопряжён'))}   {green(p['name'])}")
+        if not peers: print(f"  {yellow(tr('не сопряжён'))}")
+        print(f"  {dim(tr('серверов'))}   {len(ph.d['servers'])}\n")
         # разделы — как на ПК (кроме «Действий на сервере»: они выполняются с компьютера)
-        ch = menu(["Ожидать запросы компьютера", "Серверы", "Сопряжение", "Специальные возможности", "Выход"],
+        ch = menu([tr("Ожидать запросы компьютера"), tr("Серверы"), tr("Сопряжение"), tr("Специальные возможности"), tr("Language / Язык"), tr("Выход")],
                   default=1 if peers else 3)
         if ch == "1":
-            if not peers: print(yellow("Сначала сопряжение.")); pause(); continue
-            header("ожидание"); ph.serve("wait")
+            if not peers: print(yellow(tr("Сначала сопряжение."))); pause(); continue
+            header(tr("ожидание")); ph.serve("wait")
         elif ch == "2": ph.servers_menu()
         elif ch == "3":
-            header("сопряжение")
-            a = menu(["Начать сопряжение", "Отменить сопряжение", "Назад"], default=3 if peers else 1)
-            if a == "1": header("сопряжение"); ph.serve("pair")
-            elif a == "2" and peers and yes(red("Удалить сопряжение с компьютером?")):
+            header(tr("сопряжение"))
+            a = menu([tr("Начать сопряжение"), tr("Отменить сопряжение"), tr("Назад")], default=3 if peers else 1)
+            if a == "1": header(tr("сопряжение")); ph.serve("pair")
+            elif a == "2" and peers and yes(red(tr("Удалить сопряжение с компьютером?"))):
                 ph.d["peers"] = {}; ph.save()
         elif ch == "4":
-            header("специальные возможности")
-            a = menu(["Журнал одобрений", "Мой публичный ключ (отправить админу команды)", "Стереть все данные", "Назад"], default=4)
-            if a == "1": header("журнал одобрений"); show_journal(ph.d.get("log", [])); pause()
-            elif a == "2": header("публичный ключ"); print(cyan(ph.ks.line()) + "\n"); print(dim("Это не секрет: скопируйте и отправьте админу.")); pause()
+            header(tr("специальные возможности"))
+            a = menu([tr("Журнал одобрений"), tr("Мой публичный ключ (отправить админу команды)"), tr("Стереть все данные"), tr("Назад")], default=4)
+            if a == "1": header(tr("журнал одобрений")); show_journal(ph.d.get("log", [])); pause()
+            elif a == "2": header(tr("публичный ключ")); print(cyan(ph.ks.line()) + "\n"); print(dim(tr("Это не секрет: скопируйте и отправьте админу."))); pause()
             elif a == "3" and phone_wipe(ph.ks): return
-        elif ch == "5": clear(); return
+        elif ch == "5": language_settings(ph.d, ph.save)
+        elif ch == "6": clear(); return
 
 def show_journal(log):
-    if not log: print(dim("  Журнал пуст.")); return
+    if not log: print(dim(tr("  Журнал пуст."))); return
     for e in log[-50:]:
-        ok = e["result"] in ("разрешено", "выполнен")
+        ok = e["result"] in ("разрешено", "выполнен")  # в журнале хранятся русские статусы; переводятся при показе
         srv = f" · {e['server']}" if e.get("server") else ""
-        print(f"  {dim(e['t'])}  {e['pc']}{srv}: {e['what']} — " + (green if ok else red)(e["result"]))
-    if len(log) > 50: print(dim(f"  …показаны последние 50 из {len(log)}"))
+        print(f"  {dim(e['t'])}  {e['pc']}{srv}: {e['what']} — " + (green if ok else red)(tr(e["result"])))
+    if len(log) > 50: print(dim(tr('  …показаны последние 50 из {p0}', p0=len(log))))
 
 def phone_wipe(ks):
-    header("стереть данные")
-    a = menu(["Стереть серверы и сопряжение (ключ SSH остаётся — серверы будут пускать телефон)",
-              "Стереть всё: и ключ SSH, и приложение",
-              "Назад"], default=3)
+    header(tr("стереть данные"))
+    a = menu([tr("Стереть серверы и сопряжение (ключ SSH остаётся — серверы будут пускать телефон)"),
+              tr("Стереть всё: и ключ SSH, и приложение"),
+              tr("Назад")], default=3)
     if a == "1":
-        print(yellow("\nУдалится список серверов и сопряжение. Потом — новое сопряжение с компьютером."))
+        print(yellow(tr("\nУдалится список серверов и сопряжение. Потом — новое сопряжение с компьютером.")))
         if not confirm_wipe(): return False
         if os.path.exists(PHONE): os.remove(PHONE)
-        print(green("✓ Стёрто. Запустите ssh-storage заново.")); return True
+        print(green(tr("✓ Стёрто. Запустите ssh-storage заново."))); return True
     if a == "2":
-        print(red(bold("\n⚠ Ключ SSH будет удалён навсегда: НИ ОДИН сервер больше не пустит этот телефон.")))
-        print(yellow("  Вернуть доступ можно только резервным паролем (на компьютере → «Специальные возможности» → «Восстановление»)."))
+        print(red(bold(tr("\n⚠ Ключ SSH будет удалён навсегда: НИ ОДИН сервер больше не пустит этот телефон."))))
+        print(yellow(tr("  Вернуть доступ можно только резервным паролем (на компьютере → «Специальные возможности» → «Восстановление»).")))
         if not confirm_wipe(): return False
         subprocess.run(["termux-keystore", "delete", ks.ALIAS], capture_output=True, timeout=30)
         if os.path.exists(PHONE): os.remove(PHONE)
@@ -1355,7 +2059,7 @@ def phone_wipe(ks):
             os.remove(me)
             try: os.rmdir(HERE)
             except OSError: pass
-        print(green("✓ Всё стёрто: ключ, данные и приложение.")); return True
+        print(green(tr("✓ Всё стёрто: ключ, данные и приложение."))); return True
     return False
 
 # =====================================================================
@@ -1370,15 +2074,15 @@ PHONE_CMD = ("pkg install -y python termux-api && python -c \"import socket,hash
 def install_phone():
     """Передать программу на телефон: компьютер сам подключается (исходящее TCP,
     без открытия портов и без root). Подлинность — 16-значный код на обоих экранах."""
-    header("установка на телефон")
+    header(tr("установка на телефон"))
     with open(os.path.abspath(__file__), "rb") as f: data = f.read()
-    print("Нужно: Termux и " + bold("Termux:API") + " из F-Droid.")
-    print("В Termux выполните " + dim("(можно переслать себе в мессенджер)") + ":\n")
+    print(tr("Нужно: Termux и ") + bold("Termux:API") + tr(" из F-Droid."))
+    print(tr("В Termux выполните ") + dim(tr("(можно переслать себе в мессенджер)")) + ":\n")
     print(cyan(PHONE_CMD) + "\n")
     if shutil.which("qrencode"):  # QR: камерой телефона → «Копировать» → вставить в Termux
-        print("Или наведите камеру телефона на QR, скопируйте текст и вставьте в Termux:\n")
+        print(tr("Или наведите камеру телефона на QR, скопируйте текст и вставьте в Termux:\n"))
         subprocess.run(["qrencode", "-t", "ANSIUTF8", "-m", "2", PHONE_CMD]); print()
-    input(blue("Когда телефон ждёт — Enter: "))
+    input(blue(tr("Когда телефон ждёт — Enter: ")))
     def probe(host):
         try:
             sk = socket.create_connection((host, TCP_PORT), timeout=1.0); sk.settimeout(1.0)
@@ -1388,25 +2092,25 @@ def install_phone():
             pass
         return None
     while True:
-        print(dim("Ищу устройства…"))
+        print(dim(tr("Ищу устройства…")))
         found = scan(probe)
         if found: break
-        if not yes(yellow("Устройства не найдены. Искать снова?"), True): return
-    header("установка на телефон")
+        if not yes(yellow(tr("Устройства не найдены. Искать снова?")), True): return
+    header(tr("установка на телефон"))
     names = []
     for host, _ in found:
         try: names.append(socket.gethostbyaddr(host)[0])
-        except OSError: names.append("устройство")
-    ch = menu([f"{n}  {dim(h)}" for n, (h, _) in zip(names, found)] + [dim("Отмена")])
+        except OSError: names.append(tr("устройство"))
+    ch = menu([f"{n}  {dim(h)}" for n, (h, _) in zip(names, found)] + [dim(tr("Отмена"))])
     pick = int(ch) - 1 if ch.isdigit() and 1 <= int(ch) <= len(found) else None
     for i, (_, sk) in enumerate(found):
         if i != pick: sk.close()
     if pick is None: return
     sk = found[pick][1]
     sk.settimeout(30); sk.sendall(data); sk.close()
-    print(f"\n  Код проверки:  {mag(bold(hashlib.sha256(data).hexdigest()[:16]))}\n")
-    print("Если на телефоне тот же код — нажмите там Enter.")
-    print(red("Если код другой — НЕ нажимайте, закройте Termux: файл подменили."))
+    print(tr('\n  Код проверки:  {p0}\n', p0=mag(bold(hashlib.sha256(data).hexdigest()[:16]))))
+    print(tr("Если на телефоне тот же код — нажмите там Enter."))
+    print(red(tr("Если код другой — НЕ нажимайте, закройте Termux: файл подменили.")))
     pause()
 
 class Agent:
@@ -1435,7 +2139,7 @@ class Agent:
                 msg = conn.recv(n, socket.MSG_WAITALL)
                 if not msg: return
                 conn.sendall(self._handle(msg))
-        except (OSError, struct.error, IndexError):
+        except (OSError, struct.error, IndexError, ValueError):
             pass
         finally:
             conn.close()
@@ -1469,12 +2173,12 @@ def pick_many(sv, what):
     """Номера серверов; Enter — все. Пустой список — отмена."""
     for n, x in enumerate(sv, 1): print(f"  {n}. {server_line(x)}")
     while True:
-        a = input(blue(f"\n{what}: номера через запятую или пробел (Enter — все, 0 — отмена): ")).strip()
+        a = input(blue(tr('\n{p0}: номера через запятую или пробел (Enter — все, 0 — отмена): ', p0=what))).strip()
         if not a: return list(sv)
         nums = {int(n) if n.isdigit() else -1 for n in re.split(r"[\s,]+", a)}
         if 0 in nums: return []
         if all(1 <= n <= len(sv) for n in nums): return [sv[n - 1] for n in sorted(nums)]
-        print(yellow(f"Только номера от 1 до {len(sv)}."))
+        print(yellow(tr('Только номера от 1 до {p0}.', p0=len(sv))))
 
 def ssh_cmd(s, *opts):
     return [SSH, "-p", str(s["port"]), "-o", "ForwardAgent=no", *opts, "--", f"{s['user']}@{s['host']}"]
@@ -1485,8 +2189,8 @@ PUBKEY_RE = r"(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa|sk-ssh-ed25519@
 
 # S.6: роль = группа ssh-storage-<роль> + права: admin — sudo (свой пароль, сменить при первом входе) и журналы;
 # operator / viewer — только чтение журналов (adm, systemd-journal), без sudo.
-ROLES = {"admin": "администратор — sudo и журналы", "operator": "оператор — журналы и sudo systemctl restart/reload",
-         "viewer": "наблюдатель — журналы, без sudo"}
+ROLES = {"admin": tr("администратор — sudo и журналы"), "operator": tr("оператор — журналы и sudo systemctl restart/reload"),
+         "viewer": tr("наблюдатель — журналы, без sudo")}
 
 # Общие куски shell для участников (под root, нужны L, N, T, U). Без set -e: busybox (Alpine) не знает usermod/gpasswd/
 # passwd -e, поэтому у шагов запасной вариант, а важные шаги проверяются явно.
@@ -1523,33 +2227,38 @@ def member_vars(nick, login=None):
     assert re.fullmatch(NICK_RE, nick) and (login is None or re.fullmatch(LOGIN_RE, login))
     return (f'L={login}; ' if login else '') + f'N={nick}; T=" ssh-storage-member:{nick}:"; ' + MEMBER_SH
 
+def member_key_cmd(key, nick):
+    if not re.fullmatch(PUBKEY_RE, key) or not re.fullmatch(NICK_RE, nick):
+        raise ValueError(tr("недопустимый ключ или ник"))
+    line = f"{key} ssh-storage-member:{nick}:{time.strftime('%Y%m%d')}"
+    return ('if [ -f "$f" ]; then ' + STRIP_SH + 'fi; '
+            + f'printf "%s\\n" {shlex.quote(line)} >> "$f" || exit 1; ')
+
 def member_cmd(login, key, nick, role="viewer"):
     """Создать участника или обновить своего (тот же ник в реестре): ключ с меткой ssh-storage-member:<ник>, роль
     (группы, sudo только у admin), снять нашу блокировку после отзыва. Чужого пользователя не трогает (exit 4)."""
     assert re.fullmatch(PUBKEY_RE, key) and role in ROLES
-    line = f"{key} ssh-storage-member:{nick}:{time.strftime('%Y%m%d')}"  # символы проверены — кавычки не нужны
     sh = (member_vars(nick, login) +
-          'if id "$L" >/dev/null 2>&1; then home; ours && mine || { echo "✗ пользователь $L уже есть и это не участник $N — не трогаю"; exit 4; }; new=0; '
+          tr('if id "$L" >/dev/null 2>&1; then home; ours && mine || { echo "✗ пользователь $L уже есть и это не участник $N — не трогаю"; exit 4; }; new=0; '
           'else useradd -m -s /bin/sh "$L" 2>/dev/null || adduser -D -s /bin/sh "$L" || exit 1; new=1; home; '
           # "!" = заблокирован (sshd без PAM не пустит и по ключу); "*" = пароля нет, вход по ключу работает
           'case "$(pw)" in "!"|"!!") usermod -p "*" "$L" 2>/dev/null || sed -i "s/^$L:!*:/$L:*:/" /etc/shadow;; esac; fi; '
-          'echo "$N" > "$R/$L"; mkdir -p "$h/.ssh" || exit 1; '
-          f'grep -qF "{key.split()[1]}" "$f" 2>/dev/null || printf "%s\\n" "{line}" >> "$f" || exit 1; '
+          'echo "$N" > "$R/$L"; mkdir -p "$h/.ssh" || exit 1; ')
+          + member_key_cmd(key, nick) +
           'chmod 700 "$h/.ssh"; chmod 600 "$f"; chown -R "$L": "$h/.ssh"; '
           'if [ -f "$R/$L.locked" ]; then ' + UNLOCK_SH + 'rm -f "$R/$L.locked"; fi; '
           f'for g in admin operator viewer; do [ "$g" = {role} ] || leave ssh-storage-$g; done; '
           f'grp ssh-storage-{role}; join ssh-storage-{role}; '
           'for g in adm systemd-journal; do getent group $g >/dev/null && join $g; done; ' + OPERATOR_SUDO_SH +
           # пароль — до выдачи sudo: прерванный ввод не оставит sudo без пароля
-          ('case "$(pw)" in ""|"!"*|"*"*) echo "Временный пароль sudo для $L:"; passwd "$L" || exit 1; '
+          (tr('case "$(pw)" in ""|"!"*|"*"*) echo "Временный пароль sudo для $L:"; passwd "$L" || exit 1; '
            'if passwd -e "$L" >/dev/null 2>&1 || chage -d 0 "$L" 2>/dev/null; then echo "  $L сменит его при первом входе"; '
            'else echo "  ⚠ сервер не умеет просить смену — попросите $L выполнить passwd"; fi;; esac; '
            'SG=$(getent group sudo >/dev/null && echo sudo || echo wheel); grp $SG; join $SG; '
            # на Arch группа wheel в sudoers часто закомментирована — проверяем, что sudo действительно разрешён
-           'sudo -l -U "$L" 2>/dev/null | grep -q "may run" || echo "  ⚠ sudo для $L не работает: в /etc/sudoers не разрешена группа $SG (visudo)"; '
+           'sudo -l -U "$L" 2>/dev/null | grep -q "may run" || echo "  ⚠ sudo для $L не работает: в /etc/sudoers не разрешена группа $SG (visudo)"; ')
            if role == "admin" else 'leave sudo; leave wheel; ') +
-          f'id -nG "$L" | grep -Eq "(^| )ssh-storage-{role}( |$)" || {{ echo "✗ не удалось выдать роль"; exit 1; }}; '
-          '[ $new = 1 ] && w=создан || w=обновлён; echo "✓ $w $L ($N): ключ на месте, группы: $(id -nG "$L")"')
+          tr('id -nG "$L" | grep -Eq "(^| )ssh-storage-{p0}( |$)" || {{ echo "✗ не удалось выдать роль"; exit 1; }}; [ $new = 1 ] && w=создан || w=обновлён; echo "✓ $w $L ($N): ключ на месте, группы: $(id -nG "$L")"', p0=role))
     return as_root(sh)
 
 def revoke_cmd(nick):
@@ -1557,19 +2266,19 @@ def revoke_cmd(nick):
     группа ssh-storage-*, не root и не вы) ещё и заблокировать, убрать из sudo, выгнать из сеансов. Файлы остаются."""
     sh = (member_vars(nick) + 'n=0; for L in $(getent passwd | cut -d: -f1); do home; m=0; ours && mine && m=1; t=0; '
           'grep -q "$T" "$f" 2>/dev/null && { ' + STRIP_SH + 't=1; }; '
-          'if [ $m = 1 ]; then ' + LOCK_SH + 'echo "✓ $L: ключи сняты, вход заблокирован, сеансы закрыты, sudo снят"; '
-          'elif [ $t = 1 ]; then echo "✓ у $L снят только ключ"; else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3')
+          'if [ $m = 1 ]; then ' + LOCK_SH + tr('echo "✓ $L: ключи сняты, вход заблокирован, сеансы закрыты, sudo снят"; '
+          'elif [ $t = 1 ]; then echo "✓ у $L снят только ключ"; else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3'))
     return as_root(sh)
 
 def delete_member_cmd(nick):
     """Удалить участника полностью: его пользователя (реестр или метка, группа ssh-storage-*) с домашней папкой —
     в том числе уже отозванного. root и того, кто удаляет, не трогает: у них только снимает ключ."""
-    sh = (member_vars(nick) + 'n=0; for L in $(getent passwd | cut -d: -f1); do home; m=0; ours && mine && m=1; '
+    sh = (member_vars(nick) + tr('n=0; for L in $(getent passwd | cut -d: -f1); do home; m=0; ours && mine && m=1; '
           'if [ $m = 1 ]; then pkill -KILL -u "$L" 2>/dev/null; sleep 1; userdel -r "$L" 2>/dev/null; '
           'if id "$L" >/dev/null 2>&1; then deluser --remove-home "$L" || exit 1; fi; rm -f "$R/$L" "$R/$L.locked"; '
           'echo "✓ удалён пользователь $L и его папка"; '
-          'elif grep -q "$T" "$f" 2>/dev/null; then ' + STRIP_SH + 'echo "✓ у $L снят только ключ (не участник — не удаляю)"; '
-          'else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3')
+          'elif grep -q "$T" "$f" 2>/dev/null; then ') + STRIP_SH + tr('echo "✓ у $L снят только ключ (не участник — не удаляю)"; '
+          'else continue; fi; n=$((n+1)); done; [ $n -gt 0 ] || exit 3'))
     return as_root(sh)
 
 def ssh_alive(s):
@@ -1611,8 +2320,8 @@ class PC:
     # --- сеанс с телефоном ---
     def session(self, intent, danger=False):
         if not self.d["phone"]:
-            print(yellow("Телефон не сопряжён: пункт «Сопряжение» → «Сопряжение с телефоном».")); pause(); return None
-        print(dim("На телефоне: ssh-storage → «Ожидать запросы компьютера»."))
+            print(yellow(tr("Телефон не сопряжён: пункт «Сопряжение» → «Сопряжение с телефоном»."))); pause(); return None
+        print(dim(tr("На телефоне: ssh-storage → «Ожидать запросы компьютера».")))
         try:
             addr = find_phone(self.d["phone"]["fp"], "wait")
             if not addr: return None
@@ -1624,10 +2333,10 @@ class PC:
             k = H(b"kk", x25519(ce_priv, pe), x25519(self.me, pe), x25519(ce_priv, ppub), ce, pe)
             ch = Chan(sock, k, "c")
             ch.send({"intent": intent, "danger": danger})
-            print(f"\n  Код сеанса:  {mag(bold(session_code(k)))}")
-            print(cyan("  Подтвердите на телефоне, если там тот же код…"))
+            print(tr('\n  Код сеанса:  {p0}', p0=mag(bold(session_code(k)))))
+            print(cyan(tr("  Подтвердите на телефоне, если там тот же код…")))
             if not ch.recv().get("allow"):
-                print(red("✗ Отклонено на телефоне")); ch.close(); pause(); return None
+                print(red(tr("✗ Отклонено на телефоне"))); ch.close(); pause(); return None
             self.offer_update(ch)
             return ch
         except (OSError, ConnectionError, ValueError, KeyError) as e:
@@ -1638,42 +2347,42 @@ class PC:
         data = self_bytes()
         r = ch.call({"t": "version", "v": VERSION, "sha": hashlib.sha256(data).hexdigest(), "size": len(data)})
         if not r.get("want"): return
-        print(dim(f"Обновляю программу на телефоне ({r.get('v', '?')} → {VERSION})…"))
+        print(dim(tr('Обновляю программу на телефоне ({p0} → {p1})…', p0=r.get('v', '?'), p1=VERSION)))
         for i in range(0, len(data), UPD_CHUNK):
             if not ch.call({"t": "update_part", "i": i, "b": base64.b64encode(data[i:i + UPD_CHUNK]).decode()}).get("ok"):
-                ch.call({"t": "update_done"}); print(red("✗ Телефон отклонил обновление")); return
-        print(green("✓ Телефон обновлён (перезапустится после сеанса)") if ch.call({"t": "update_done"}).get("ok")
-              else red("✗ Обновление на телефоне не прошло проверку"))
+                ch.call({"t": "update_done"}); print(red(tr("✗ Телефон отклонил обновление"))); return
+        print(green(tr("✓ Телефон обновлён (перезапустится после сеанса)")) if ch.call({"t": "update_done"}).get("ok")
+              else red(tr("✗ Обновление на телефоне не прошло проверку")))
 
     def ensure_recovery(self):
         if self.d["recovery"] is not None: return
         # S.3: в командном режиме резервный пароль только у админа, участник восстанавливается через админа
-        print(dim("«Да» — только если админ команды сам выдал вам доступ. Иначе ответьте «нет»."))
-        if yes("Это компьютер участника команды (резервный пароль хранит админ)?", False):
+        print(dim(tr("«Да» — только если админ команды сам выдал вам доступ. Иначе ответьте «нет».")))
+        if yes(tr("Это компьютер участника команды (резервный пароль хранит админ)?"), False):
             self.d["recovery"] = ""; self.save(); return
         self.d["recovery"] = self.new_recovery(); self.save()
 
     def new_recovery(self):
         """Показать новый резервный пароль, проверить ввод; вернуть строку резервного ключа."""
-        header("резервный пароль")
+        header(tr("резервный пароль"))
         pw = new_recovery_password()
-        print("Это единственный способ вернуть доступ, если телефон потеряется или сломается.")
-        print("Запишите его на бумагу и храните отдельно. Он больше нигде не сохраняется.\n")
+        print(tr("Это единственный способ вернуть доступ, если телефон потеряется или сломается."))
+        print(tr("Запишите его на бумагу и храните отдельно. Он больше нигде не сохраняется.\n"))
         print(f"     {mag(bold(pw))}\n")
         while True:
-            again = getpass.getpass(blue("Введите его для проверки: "))
+            again = getpass.getpass(blue(tr("Введите его для проверки: ")))
             if re.sub(r"[\s-]", "", again) == pw.replace("-", ""): break
-            print(red("  Не совпадает."))
+            print(red(tr("  Не совпадает.")))
         clear()
         if USE_COLOR: print("\033[3J", end="", flush=True)
-        print(dim("Вычисляю резервный ключ…"))
+        print(dim(tr("Вычисляю резервный ключ…")))
         return recovery_line(recovery_seed(pw))
 
     def pair(self):
         self.ensure_recovery()
-        header("сопряжение с телефоном")
-        print(dim("На телефоне: ssh-storage → «Начать сопряжение».\n"))
-        input(blue("Enter — искать телефон: "))
+        header(tr("сопряжение с телефоном"))
+        print(dim(tr("На телефоне: ssh-storage → «Начать сопряжение».\n")))
+        input(blue(tr("Enter — искать телефон: ")))
         try:
             addr = find_phone(mode="pair")
             if not addr: return
@@ -1685,44 +2394,44 @@ class PC:
             ppub, nP = bytes.fromhex(r["pub"]), bytes.fromhex(r["n"])
             send_raw(sock, {"n": nC.hex()})
             code = sas(pubkey(self.me), ppub, nC, nP)
-            header("сопряжение с телефоном")
-            print(f"  Телефон: {dim(fingerprint(ppub))}\n")
+            header(tr("сопряжение с телефоном"))
+            print(tr('  Телефон: {p0}\n', p0=dim(fingerprint(ppub))))
             ok = False
             for _ in range(3):
-                if re.sub(r"\D", "", input(blue("Код с экрана телефона: "))) == code.replace(" ", ""):
-                    ok = True; print(green(bold("✓ Код верный")) + dim("  — подтвердите на телефоне")); break
-                print(red("✗ Не совпадает"))
-            if not ok: print(red("Если вводили правильно — кто-то вмешивается в соединение."))
+                if re.sub(r"\D", "", input(blue(tr("Код с экрана телефона: ")))) == code.replace(" ", ""):
+                    ok = True; print(green(bold(tr("✓ Код верный"))) + dim(tr("  — подтвердите на телефоне"))); break
+                print(red(tr("✗ Не совпадает")))
+            if not ok: print(red(tr("Если вводили правильно — кто-то вмешивается в соединение.")))
             send_raw(sock, {"ok": ok})
             if not ok or not recv_raw(sock).get("ok"):
-                print(red("✗ Сопряжение отменено")); pause(); return
+                print(red(tr("✗ Сопряжение отменено"))); pause(); return
             ch = Chan(sock, H(b"pair", x25519(self.me, ppub), nC, nP), "c")
             ch.send({"recovery": self.d["recovery"]})
             ch.recv()
             self.d["phone"] = {"pub": ppub.hex(), "fp": fingerprint(ppub)}; self.save()
             sock.close()
-            print(green("\n✓ Телефон сопряжён"))
-            print("Дальше: «Серверы» → «Добавить сервер» — ключ телефона пропишется на сервер."); pause()
+            print(green(tr("\n✓ Телефон сопряжён")))
+            print(tr("Дальше: «Серверы» → «Добавить сервер» — ключ телефона пропишется на сервер.")); pause()
         except (OSError, ConnectionError, ValueError, KeyError) as e:
             print(red(f"✗ {e}")); pause()
 
     # --- подключение ---
     def connect(self):
-        header("подключение")
-        ch = self.session("вход на сервер")
+        header(tr("подключение"))
+        ch = self.session(tr("вход на сервер"))
         if not ch: return
         try:
             r = ch.call({"t": "list"})
             servers = [s for s in r["servers"] if server_ok(s)]
             self.cache(servers)
             if not servers:
-                print(yellow("На телефоне нет серверов. Добавьте: «Серверы» → «Добавить сервер».")); pause(); return
-            header("серверы")
-            pick = menu([server_line(s) for s in servers] + [dim("Отмена")])
+                print(yellow(tr("На телефоне нет серверов. Добавьте: «Серверы» → «Добавить сервер»."))); pause(); return
+            header(tr("серверы"))
+            pick = menu([server_line(s) for s in servers] + [dim(tr("Отмена"))])
             if not (pick.isdigit() and 1 <= int(pick) <= len(servers)): return
             s = servers[int(pick) - 1]
             if not check_reach(s): return
-            clear(); print(green(f"→ {s['user']}@{s['host']}:{s['port']}  {dim('(подпись — на телефоне)')}\n"))
+            clear(); print(green(f"→ {s['user']}@{s['host']}:{s['port']}  {dim(tr('(подпись — на телефоне)'))}\n"))
             rc, _ = self.phone_ssh(ch, s)
             try: ch.call({"t": "result", "ok": rc != 255})  # 255 — ошибка самого ssh (вход/связь)
             except (OSError, ConnectionError, ValueError): pass
@@ -1734,33 +2443,33 @@ class PC:
 
     # --- серверы: правка несекретных данных (сохраняет телефон, после подтверждения) ---
     def servers(self):
-        header("серверы")
-        ch = self.session("изменить список серверов")
+        header(tr("серверы"))
+        ch = self.session(tr("изменить список серверов"))
         if not ch: return
         try:
             while True:
                 r = ch.call({"t": "list"})
                 sv = r["servers"]; self.cache(sv)
-                header("серверы")
-                pick = menu([server_line(x) for x in sv] + [dim("Назад")], default=len(sv) + 1)
+                header(tr("серверы"))
+                pick = menu([server_line(x) for x in sv] + [dim(tr("Назад"))], default=len(sv) + 1)
                 if not (pick.isdigit() and 1 <= int(pick) <= len(sv)): return
                 i = int(pick) - 1; s = sv[i]
                 header(s["name"])
-                a = menu(["Изменить (название, хост, порт, пользователь, имя)", "Команда установки для сервера",
-                          "Удалить из списка", "Обновить ключи на сервере (имя в подписи, резервный ключ)",
-                          "Назад"], default=5)
+                a = menu([tr("Изменить (название, хост, порт, пользователь, имя)"), tr("Команда установки для сервера"),
+                          tr("Удалить из списка"), tr("Обновить ключи на сервере (имя в подписи, резервный ключ)"),
+                          tr("Назад")], default=5)
                 if a == "1":
-                    header("изменить"); new = edit_server(s, sv)
+                    header(tr("изменить")); new = edit_server(s, sv)
                     if s.get("pending"): new["pending"] = True
-                    print(cyan("Подтвердите изменение на телефоне…"))
+                    print(cyan(tr("Подтвердите изменение на телефоне…")))
                     ok = ch.call({"t": "edit", "i": i, "old": s, "server": new}).get("ok")
-                    print(green("✓ Сохранено") if ok else red("✗ Не сохранено (отклонено на телефоне)"))
+                    print(green(tr("✓ Сохранено")) if ok else red(tr("✗ Не сохранено (отклонено на телефоне)")))
                     if ok and new.get("nick") != s.get("nick"):
-                        print(dim("Имя в подписи ключа на сервере сменится после «Обновить ключи на сервере»."))
+                        print(dim(tr("Имя в подписи ключа на сервере сменится после «Обновить ключи на сервере».")))
                     pause()
                 elif a == "2":
-                    header("установка на сервер")
-                    print(f"Выполните на сервере {bold(s['user'] + '@' + s['host'])}:\n")
+                    header(tr("установка на сервер"))
+                    print(tr('Выполните на сервере {p0}:\n', p0=bold(s['user'] + '@' + s['host'])))
                     print(cyan(install_cmd(with_nick(r["line"], server_tag(s)), r["recovery"])) + "\n"); pause()
                 elif a == "4":
                     # вход ключом телефона и та же команда установки: ключ с текущим именем, резервный — если нет
@@ -1770,14 +2479,14 @@ class PC:
                     if ok and s.get("pending"):
                         s = {k: v for k, v in s.items() if k != "pending"}
                         ch.call({"t": "added", "server": s})
-                    try: ch.call({"t": "report", "ok": ok, "text": "обновить ключи на сервере"})
+                    try: ch.call({"t": "report", "ok": ok, "text": tr("обновить ключи на сервере")})
                     except (OSError, ConnectionError, ValueError): pass
-                    print(green("✓ Ключи на сервере обновлены") if ok else red("✗ Не удалось (вход или запись ключей)"))
+                    print(green(tr("✓ Ключи на сервере обновлены")) if ok else red(tr("✗ Не удалось (вход или запись ключей)")))
                     pause()
-                elif a == "3" and yes(red(f"Удалить «{s['name']}» из списка?")):
-                    print(cyan("Подтвердите удаление на телефоне…"))
+                elif a == "3" and yes(red(tr('Удалить «{p0}» из списка?', p0=s['name']))):
+                    print(cyan(tr("Подтвердите удаление на телефоне…")))
                     ok = ch.call({"t": "delete", "i": i, "old": s}).get("ok")
-                    print(green("✓ Удалено") if ok else red("✗ Отклонено на телефоне")); pause()
+                    print(green(tr("✓ Удалено")) if ok else red(tr("✗ Отклонено на телефоне"))); pause()
         except (OSError, ConnectionError, ValueError, KeyError) as e:
             print(red(f"✗ {e}")); pause()
         finally:
@@ -1788,137 +2497,137 @@ class PC:
         """Выбор сервера из сохранённого списка (копия с телефона) с отметкой прав."""
         sv = [x for x in self.d["servers"] if server_ok(x)]
         if not sv:
-            print(yellow("Список серверов пуст. Добавьте: «Серверы» → «Добавить сервер».")); pause(); return None
+            print(yellow(tr("Список серверов пуст. Добавьте: «Серверы» → «Добавить сервер»."))); pause(); return None
         header(title)
-        pick = menu([f"{server_line(x)}  {dim('[' + self.rights_label(x) + ']')}" for x in sv] + [dim("Назад")],
+        pick = menu([f"{server_line(x)}  {dim('[' + self.rights_label(x) + ']')}" for x in sv] + [dim(tr("Назад"))],
                     default=len(sv) + 1)
         return sv[int(pick) - 1] if pick.isdigit() and 1 <= int(pick) <= len(sv) else None
 
     def section_servers(self):
         while True:
-            header("серверы")
+            header(tr("серверы"))
             # участнику команды (recovery == "") управление участниками не показываем — это делает админ
             # участнику команды (recovery == "") не показываем «Новый VPS» (у него нет резервного ключа — при потере телефона
             # сервер без паролей закроется насовсем) и управление участниками (это делает админ)
             adm = self.d["recovery"] != ""
-            items = [("Список серверов (изменить / команда установки / удалить)", self.servers), ("Добавить сервер", self.add)] \
-                + ([("Новый VPS: настроить с нуля", self.new_vps)] if adm else []) \
-                + [("Массовое добавление", self.bulk_add), ("Массовое удаление", self.bulk_delete),
-                   ("Перевыпуск ключей (на всех серверах)", self.rekey)] \
-                + ([("Участники серверов (командный режим)", self.members_menu)] if adm else [])
-            a = menu([t for t, _ in items] + ["Назад"], default=1)
+            items = [(tr("Список серверов (изменить / команда установки / удалить)"), self.servers), (tr("Добавить сервер"), self.add)] \
+                + ([(tr("Новый VPS: настроить с нуля"), self.new_vps)] if adm else []) \
+                + [(tr("Массовое добавление"), self.bulk_add), (tr("Массовое удаление"), self.bulk_delete),
+                   (tr("Перевыпуск ключей (на всех серверах)"), self.rekey)] \
+                + ([(tr("Участники серверов (командный режим)"), self.members_menu)] if adm else [])
+            a = menu([t for t, _ in items] + [tr("Назад")], default=1)
             if not (a.isdigit() and 1 <= int(a) <= len(items)): return
             items[int(a) - 1][1]()
 
     def members_menu(self):
-        b = menu(["Добавить участника на серверы", "Отозвать или удалить участника", "Назад"], default=1)
+        b = menu([tr("Добавить участника на серверы"), tr("Отозвать или удалить участника"), tr("Назад")], default=1)
         if b == "1": self.add_member_many()
         elif b == "2": self.revoke_member()
 
     def section_pairing(self):
         while True:
-            header("сопряжение")
-            a = menu(["Сопряжение с телефоном", "Установить / обновить приложение на телефоне", "Назад"], default=1)
+            header(tr("сопряжение"))
+            a = menu([tr("Сопряжение с телефоном"), tr("Установить / обновить приложение на телефоне"), tr("Назад")], default=1)
             if a == "1": self.pair()
             elif a == "2": install_phone()
             else: return
 
     ACTIONS = [  # (название, нужный ранг прав)
-        ("История (входы, sudo-команды, пакеты, изменения /etc)", 2),
-        ("Запись команд auditd (включить / история / выключить)", 3),
-        ("Попытки взлома (неверные входы, несуществующие логины, частые IP)", 2),
-        ("Диагностика (упавшие сервисы, ошибки журнала, процессы)", 1),
-        ("Проверка на зачатки неисправностей (быстрая / полная)", 1),
-        ("Перезагрузить сервер", 3),
-        ("Создать пользователя для участника (командный режим)", 3),
-        ("Проверка процессов (подмена системных, новые программы, скрытые процессы)", 1),
-        ("Туннель к веб-панели (3x-ui и др.) — панель не торчит в интернет", 1)]
+        (tr("История (входы, sudo-команды, пакеты, изменения /etc)"), 2),
+        (tr("Запись команд auditd (включить / история / выключить)"), 3),
+        (tr("Попытки взлома (неверные входы, несуществующие логины, частые IP)"), 2),
+        (tr("Диагностика (упавшие сервисы, ошибки журнала, процессы)"), 1),
+        (tr("Проверка на зачатки неисправностей (быстрая / полная)"), 1),
+        (tr("Перезагрузить сервер"), 3),
+        (tr("Создать пользователя для участника (командный режим)"), 3),
+        (tr("Проверка процессов (подмена системных, новые программы, скрытые процессы)"), 1),
+        (tr("Туннель к веб-панели (3x-ui и др.) — панель не торчит в интернет"), 1)]
 
     def section_actions(self):
-        s = self.pick_server("действия на сервере")
+        s = self.pick_server(tr("действия на сервере"))
         if not s: return
         while True:
             lv = self.rights(s); rank = RIGHTS[lv][1] if lv else 0
-            header(f"действия · {s['name']}")
-            print(f"  {dim(self.skey(s))} · права: {bold(self.rights_label(s))}\n")
+            header(tr('действия · {p0}', p0=s['name']))
+            print(tr('  {p0} · права: {p1}\n', p0=dim(self.skey(s)), p1=bold(self.rights_label(s))))
             items = []
             for name, need in self.ACTIONS:
-                mark = "" if rank >= need or not lv else yellow(f"  (нужно: {NEED[need]})")
-                items.append(name + mark + ("" if name.startswith(("История", "Запись", "Попытки", "Диагностика", "Проверка", "Перезагрузить", "Создать", "Туннель")) else dim("  — в разработке")))
-            items += ["Проверить права на сервере", "Назад"]
+                mark = "" if rank >= need or not lv else yellow(tr('  (нужно: {p0})', p0=NEED[need]))
+                items.append(name + mark)
+            items += [tr("Проверить права на сервере"), tr("Назад")]
             a = menu(items, default=len(items) - 1)
             if a == str(len(items) - 1):
-                ch = self.session(f"проверить права на {s['name']}")
+                ch = self.session(tr('проверить права на {p0}', p0=s['name']))
                 if not ch: continue
                 try:
                     rc, _ = self.phone_ssh(ch, s, "true")
                     try: ch.call({"t": "result", "ok": rc != 255})
                     except (OSError, ConnectionError, ValueError): pass
-                    print(green(f"✓ Права: {self.rights_label(s)}") if rc != 255 else red("✗ Вход не удался"))
+                    print(green(tr('✓ Права: {p0}', p0=self.rights_label(s))) if rc != 255 else red(tr("✗ Вход не удался")))
                 except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e:
-                    print(red(f"✗ {e or 'сервер не найден в списке телефона'}"))
+                    print(red(f"✗ {e or tr('сервер не найден в списке телефона')}"))
                 finally: ch.close()
                 pause()
             elif a.isdigit() and 1 <= int(a) <= len(self.ACTIONS):
                 need = self.ACTIONS[int(a) - 1][1]
                 if lv and rank < need:
-                    print(yellow(f"Недостаточно прав. Нужно: {NEED[need]}."))
-                    print(dim("Права определяются при каждом входе; если их добавили — «Проверить права»."))
+                    print(yellow(tr('Недостаточно прав. Нужно: {p0}.', p0=NEED[need])))
+                    print(dim(tr("Права определяются при каждом входе; если их добавили — «Проверить права».")))
                 elif a == "1": self.history(s)
                 elif a == "2": self.audit(s); continue
-                elif a == "3": self.history(s, ATTACKS_SH, show_attacks, "попытки взлома")
+                elif a == "3": self.history(s, ATTACKS_SH, show_attacks, tr("попытки взлома"))
                 elif a == "4": self.diagnose(s); continue
                 elif a == "5": self.health(s); continue
                 elif a == "6": self.reboot(s); continue
-                elif a == "7" and self.d["recovery"] == "": print(yellow("Участников добавляет админ команды."))
+                elif a == "7" and self.d["recovery"] == "": print(yellow(tr("Участников добавляет админ команды.")))
                 elif a == "7": self.add_member(s); continue
                 elif a == "8": self.check_procs(s); continue
                 elif a == "9": self.tunnel(s); continue
                 else:
-                    print(yellow("Этот пункт в разработке (этап 2)."))
+                    print(yellow(tr("Этот пункт в разработке (этап 2).")))
                 pause()
             else: return
 
-    def history(self, s, script=None, show=None, title="история"):
-        days = ask("За сколько дней", 7, validate=lambda v: v.isdigit() and 0 < int(v) <= 365)
-        ch = self.session(f"{title} {s['name']} (только чтение)")
+    def history(self, s, script=None, show=None, title=tr("история")):
+        days = ask(tr("За сколько дней"), 7, validate=lambda v: v.isdigit() and 0 < int(v) <= 365)
+        ch = self.session(tr('{p0} {p1} (только чтение)', p0=title, p1=s['name']))
         if not ch: return
         try:
             rc, out = self.phone_ssh(ch, s, "sh -c " + shlex.quote(history_cmd(days, script=script)))
             try: ch.call({"t": "result", "ok": rc != 255})
             except (OSError, ConnectionError, ValueError): pass
-            if rc == 255 or "==END==" not in (out or ""): print(red("✗ Не удалось получить историю")); return
-            header(f"{title} · {s['name']} · {days} дн.")
+            if rc == 255 or "==END==" not in (out or ""): print(red(tr("✗ Не удалось получить историю"))); return
+            header(tr('{p0} · {p1} · {p2} дн.', p0=title, p1=s['name'], p2=days))
             (show or show_history)(parse_history(out))
         except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: print(red(f"✗ {e}"))
         finally: ch.close()
 
     def audit(self, s):
         while True:
-            header(f"запись команд · {s['name']}")
-            print(dim("  auditd записывает каждую запущенную команду с исходным пользователем входа —"))
-            print(dim("  видно, кто на самом деле работал, даже после sudo -i / su. Нужен root или sudo.\n"))
-            a = menu(["Включить запись команд", "История команд", "Выключить (откат к прежним настройкам)", "Назад"],
+            header(tr('запись команд · {p0}', p0=s['name']))
+            print(dim(tr("  auditd записывает каждую запущенную команду с исходным пользователем входа —")))
+            print(dim(tr("  видно, кто на самом деле работал, даже после sudo -i / su. Нужен root или sudo.\n")))
+            a = menu([tr("Включить запись команд"), tr("История команд"), tr("Выключить (откат к прежним настройкам)"), tr("Назад")],
                      default=2)
             if a == "1":
-                print(yellow("Будут записываться команды ВСЕХ пользователей сервера с аргументами (в т.ч. пароль, если его набрать\n"
-                             "прямо в команде: mysql -pПАРОЛЬ). Читать журнал может любой с sudo. Предупредите участников."))
-                if not yes("Включить?"): continue
-                self.danger("включить запись команд (auditd)", s,
+                print(yellow(tr("Будут записываться команды ВСЕХ пользователей сервера с аргументами (в т.ч. пароль, если его набрать\n"
+                             "прямо в команде: mysql -pПАРОЛЬ). Читать журнал может любой с sudo. Предупредите участников.")))
+                if not yes(tr("Включить?")): continue
+                self.danger(tr("включить запись команд (auditd)"), s,
                             lambda ch: (self.phone_ssh(ch, s, "sh -c " + shlex.quote(AUDIT_ON_CMD), tty=True)[0] == 0,
-                                        "запись команд включена"))
+                                        tr("запись команд включена")))
             elif a == "3":
-                self.danger("выключить запись команд (auditd), откат", s,
+                self.danger(tr("выключить запись команд (auditd), откат"), s,
                             lambda ch: (self.phone_ssh(ch, s, "sh -c " + shlex.quote(AUDIT_OFF_CMD), tty=True)[0] == 0,
-                                        "запись команд выключена"))
+                                        tr("запись команд выключена")))
             elif a == "2":
-                p = menu(["Сегодня", "Неделя", "Месяц"], default=2)
+                p = menu([tr("Сегодня"), tr("Неделя"), tr("Месяц")], default=2)
                 start = {"1": "today", "3": "this-month"}.get(p, "week-ago")
-                ch = self.session(f"история команд {s['name']} (только чтение)")
+                ch = self.session(tr('история команд {p0} (только чтение)', p0=s['name']))
                 if not ch: continue
                 try:
-                    header(f"история команд · {s['name']}")
-                    print(dim("время  исходный пользователь -> от чьего имени:  команда\n"))
+                    header(tr('история команд · {p0}', p0=s['name']))
+                    print(dim(tr("время  исходный пользователь -> от чьего имени:  команда\n")))
                     rc, _ = self.phone_ssh(ch, s, "sh -c " + shlex.quote(audit_history_cmd(start)), tty=True)
                     try: ch.call({"t": "result", "ok": rc != 255})
                     except (OSError, ConnectionError, ValueError): pass
@@ -1928,44 +2637,44 @@ class PC:
             else: return
 
     def health(self, s):
-        full = menu(["Быстрая (диск, память, нагрузка, время)",
-                     "Полная (+ OOM, рост ошибок, SSL-сертификаты, обновления безопасности)"], default=1) == "2"
-        ch = self.session(f"проверка {s['name']} (только чтение)")
+        full = menu([tr("Быстрая (диск, память, нагрузка, время)"),
+                     tr("Полная (+ OOM, рост ошибок, SSL-сертификаты, обновления безопасности)")], default=1) == "2"
+        ch = self.session(tr('проверка {p0} (только чтение)', p0=s['name']))
         if not ch: return
         try:
             rc, out = self.phone_ssh(ch, s, "sh -c " + shlex.quote(f"FULL={int(full)}\n" + HEALTH_SH +
                                                                    "\ncat ~/.ssh-storage-metrics 2>/dev/null; echo ==METRICS=="))
             try: ch.call({"t": "result", "ok": rc != 255})
             except (OSError, ConnectionError, ValueError): pass
-            if rc == 255 or "==END==" not in (out or ""): print(red("✗ Не удалось выполнить проверку")); return
-            header(f"проверка · {s['name']} · {'полная' if full else 'быстрая'}")
+            if rc == 255 or "==END==" not in (out or ""): print(red(tr("✗ Не удалось выполнить проверку"))); return
+            header(tr('проверка · {p0} · {p1}', p0=s['name'], p1=tr('полная') if full else tr('быстрая')))
             out, hist = out.split("==END==", 1)
             show_health(out)
         except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: print(red(f"✗ {e}")); return
         finally: ch.close()
         pts = [[float(x) for x in l.split()] for l in hist.splitlines() if re.fullmatch(r"\d+ \d+ \d+ \d+ [\d.]+", l)]
-        m = re.search(r"на (\d+) ядер", out); cores = int(m[1]) if m else 1
+        m = re.search(tr(r"на (\d+) ядер"), out); cores = int(m[1]) if m else 1
         while True:
             print()
-            a = menu([f"График: {x}" for x in METRICS] +
-                     ["Сборщик истории: " + ("удалить (и всю историю)" if pts else "установить (графики за час / сутки / месяц)"), "Назад"],
+            a = menu([tr('График: {p0}', p0=x) for x in METRICS] +
+                     [tr("Сборщик истории: ") + (tr("удалить (и всю историю)") if pts else tr("установить (графики за час / сутки / месяц)")), tr("Назад")],
                      default=6)
             if a in ("1", "2", "3", "4"):
-                if not pts: print(yellow("История пуста: установите сборщик (пункт 5). Первые точки — через 5 минут.")); continue
-                p = menu(["Последний час", "Сутки", "Месяц"], default=2)
-                header(f"история · {s['name']}")
+                if not pts: print(yellow(tr("История пуста: установите сборщик (пункт 5). Первые точки — через 5 минут."))); continue
+                p = menu([tr("Последний час"), tr("Сутки"), tr("Месяц")], default=2)
+                header(tr('история · {p0}', p0=s['name']))
                 show_metric(pts, int(a), {"1": 3600, "3": 31 * 86400}.get(p, 86400), cores); pause()
             elif a == "5":
                 on = not pts
-                if not on and not yes(red("Удалить сборщик и всю накопленную историю?")): continue
-                self.danger(("установить" if on else "удалить") + " сборщик истории нагрузки", s,
+                if not on and not yes(red(tr("Удалить сборщик и всю накопленную историю?"))): continue
+                self.danger((tr("установить") if on else tr("удалить")) + tr(" сборщик истории нагрузки"), s,
                             lambda ch: ("SSH-STORAGE-OK" in (self.phone_ssh(ch, s, "sh -c " + shlex.quote(COLLECT_ON if on else COLLECT_OFF))[1] or ""),
-                                        "сборщик установлен: точка раз в 5 мин, хранится 31 день" if on else "сборщик и история удалены"))
+                                        tr("сборщик установлен: точка раз в 5 мин, хранится 31 день") if on else tr("сборщик и история удалены")))
                 return
             else: return
 
     def diagnose(self, s):
-        ch = self.session(f"диагностика {s['name']} (только чтение)")
+        ch = self.session(tr('диагностика {p0} (только чтение)', p0=s['name']))
         if not ch: return
         try:
             rc, out = self.phone_ssh(ch, s, "sh -c " + shlex.quote(history_cmd(1, 30, script=DIAG_SH)))
@@ -1973,35 +2682,35 @@ class PC:
             except (OSError, ConnectionError, ValueError): pass
         except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: print(red(f"✗ {e}")); pause(); return
         finally: ch.close()
-        if rc == 255 or "==END==" not in (out or ""): print(red("✗ Не удалось получить данные")); pause(); return
+        if rc == 255 or "==END==" not in (out or ""): print(red(tr("✗ Не удалось получить данные"))); pause(); return
         sec = parse_history(out)
         units = [u for u in sec.get("FAILED", []) if re.fullmatch(r"[\w@.:-]+", u) and not u.startswith(("sshd", "ssh."))]
         procs = [l.split() for l in sec.get("PROCS", [])]
         procs = [f for f in procs if len(f) == 5 and f[0].isdigit()]
-        header(f"диагностика · {s['name']}")
-        print(bold("Упавшие сервисы"))
+        header(tr('диагностика · {p0}', p0=s['name']))
+        print(bold(tr("Упавшие сервисы")))
         for n, u in enumerate(units, 1): print(f"  {n:>2}. {red(u)}")
-        if not units: print(green("  нет"))
-        print("\n" + bold("Ошибки журнала за сутки") + dim("  (последние 30, без IP)"))
-        for l in sec.get("ERRORS", []) or [green("нет")]: print("  " + l[:160])
-        print("\n" + bold("Процессы с наибольшей нагрузкой") + dim("  (PID 1, sshd и свой сеанс не показаны)"))
+        if not units: print(green(tr("  нет")))
+        print("\n" + bold(tr("Ошибки журнала за сутки")) + dim(tr("  (последние 30, без IP)")))
+        for l in sec.get("ERRORS", []) or [green(tr("нет"))]: print("  " + l[:160])
+        print("\n" + bold(tr("Процессы с наибольшей нагрузкой")) + dim(tr("  (PID 1, sshd и свой сеанс не показаны)")))
         for n, f in enumerate(procs, len(units) + 1):
-            print(f"  {n:>2}. {f[4]:<20} {dim('pid')} {f[0]:<7} {dim('польз.')} {f[1]:<10} cpu {f[2]}%  mem {f[3]}%")
+            print(f"  {n:>2}. {f[4]:<20} {dim('pid')} {f[0]:<7} {dim(tr('польз.'))} {f[1]:<10} cpu {f[2]}%  mem {f[3]}%")
         print()
-        a = menu(["Перезапустить сервисы (номера)", "Остановить процессы — SIGTERM (номера)",
-                  "Убить процессы принудительно — SIGKILL (номера)", "Назад"], default=4)
+        a = menu([tr("Перезапустить сервисы (номера)"), tr("Остановить процессы — SIGTERM (номера)"),
+                  tr("Убить процессы принудительно — SIGKILL (номера)"), tr("Назад")], default=4)
         if a not in ("1", "2", "3"): return
-        nums = {int(n) for n in re.split(r"[\s,]+", input(blue("Номера через запятую или пробел: ")).strip()) if n.isdigit()}
+        nums = {int(n) for n in re.split(r"[\s,]+", input(blue(tr("Номера через запятую или пробел: "))).strip()) if n.isdigit()}
         if a == "1": items = [units[n - 1] for n in sorted(nums) if 1 <= n <= len(units)]
         else: items = [(procs[n - 1 - len(units)][0], procs[n - 1 - len(units)][4]) for n in sorted(nums)
                        if len(units) < n <= len(units) + len(procs)]
-        if not items: print(yellow("Нет подходящих номеров.")); pause(); return
+        if not items: print(yellow(tr("Нет подходящих номеров."))); pause(); return
         kind = {"1": "restart", "2": "TERM", "3": "KILL"}[a]
-        what = {"restart": "перезапустить", "TERM": "остановить (SIGTERM)", "KILL": "убить (SIGKILL)"}[kind]
-        print(yellow(f"\nБудет {what}:"))
+        what = {"restart": tr("перезапустить"), "TERM": tr("остановить (SIGTERM)"), "KILL": tr("убить (SIGKILL)")}[kind]
+        print(yellow(tr('\nБудет {p0}:', p0=what)))
         for x in items: print("  " + (x if kind == "restart" else f"{x[1]} (pid {x[0]})"))
-        if kind == "KILL": print(red("SIGKILL не даёт процессу сохранить данные — только если SIGTERM не помог."))
-        if not yes(red("Выполнить?")): return
+        if kind == "KILL": print(red(tr("SIGKILL не даёт процессу сохранить данные — только если SIGTERM не помог.")))
+        if not yes(red(tr("Выполнить?"))): return
         names = ", ".join(x if kind == "restart" else x[1] for x in items)
         self.danger(f"{what}: {names}"[:100], s,
                     lambda ch: (self.phone_ssh(ch, s, "sh -c " + shlex.quote(diag_action_cmd(kind, items)), tty=True)[0] == 0,
@@ -2009,45 +2718,45 @@ class PC:
 
     def section_special(self):
         while True:
-            header("специальные возможности")
-            items = ["Восстановление по резервному паролю"]
-            if os.path.exists(LEGACY_VAULT): items.append("Перенести старые подключения (vault.json)")
-            items += ["Журнал одобрений (с телефона)", "Стереть все данные", "Назад"]
-            a = menu(items, default=len(items))
-            act = items[int(a) - 1] if a.isdigit() and 1 <= int(a) <= len(items) else "Назад"
-            if act.startswith("Восстановление"):
-                if self.d["recovery"] == "": print(yellow("Вы участник команды: доступ восстанавливает админ (добавит ваш новый ключ).")); pause()
+            header(tr("специальные возможности"))
+            items = [("recovery", tr("Восстановление по резервному паролю"))]
+            if os.path.exists(LEGACY_VAULT): items.append(("migrate", tr("Перенести старые подключения (vault.json)")))
+            items += [("journal", tr("Журнал одобрений (с телефона)")), ("wipe", tr("Стереть все данные")), ("back", tr("Назад"))]
+            a = menu([text for _, text in items], default=len(items))
+            act = items[int(a) - 1][0] if a.isdigit() and 1 <= int(a) <= len(items) else "back"
+            if act == "recovery":
+                if self.d["recovery"] == "": print(yellow(tr("Вы участник команды: доступ восстанавливает админ (добавит ваш новый ключ)."))); pause()
                 else: self.recovery()
-            elif act.startswith("Перенести"): self.migrate()
-            elif "Журнал" in act: self.journal()
-            elif act == "Стереть все данные":
+            elif act == "migrate": self.migrate()
+            elif act == "journal": self.journal()
+            elif act == "wipe":
                 if pc_wipe(): return "wiped"
             else: return
 
     def ask_member(self):
-        print(dim("  У каждого участника свой Unix-пользователь и свой ключ — в журналах видно, кто что делал.\n"))
-        login = ask("Логин на сервере (a-z, 0-9, _ -)", validate=lambda v: bool(re.fullmatch(LOGIN_RE, v)))
-        nick = ask("Ник участника (для метки ключа)", login, validate=lambda v: bool(re.fullmatch(NICK_RE, v)))
-        key = " ".join(ask("Публичный ключ участника (строка ssh-ed25519 …)",
+        print(dim(tr("  У каждого участника свой Unix-пользователь и свой ключ — в журналах видно, кто что делал.\n")))
+        login = ask(tr("Логин на сервере (a-z, 0-9, _ -)"), validate=lambda v: bool(re.fullmatch(LOGIN_RE, v)))
+        nick = ask(tr("Ник участника (для метки ключа)"), login, validate=lambda v: bool(re.fullmatch(NICK_RE, v)))
+        key = " ".join(ask(tr("Публичный ключ участника (строка ssh-ed25519 …)"),
                            validate=lambda v: bool(re.fullmatch(PUBKEY_RE, " ".join(v.split()[:2])))).split()[:2])
-        print(dim("  Роль задаёт права. Администратору sudo нужен только если он ставит пакеты и правит системные файлы."))
+        print(dim(tr("  Роль задаёт права. Администратору sudo нужен только если он ставит пакеты и правит системные файлы.")))
         a = menu(list(ROLES.values()), default=3)
         role = list(ROLES)[int(a) - 1] if a in ("1", "2", "3") else "viewer"
         return login, nick, key, role
 
     def add_member(self, s):
-        header(f"новый пользователь · {s['name']}")
+        header(tr('новый пользователь · {p0}', p0=s['name']))
         login, nick, key, role = self.ask_member()
-        print(yellow(f"\nБудет создан пользователь {login} на {s['name']} с ключом участника {nick}."))
-        if not yes(red("Выполнить?")): return
+        print(yellow(tr('\nБудет создан пользователь {p0} на {p1} с ключом участника {p2}.', p0=login, p1=s['name'], p2=nick)))
+        if not yes(red(tr("Выполнить?"))): return
         def run(ch):
             ok = self.phone_ssh(ch, s, "sh -c " + shlex.quote(member_cmd(login, key, nick, role)), tty=True)[0] == 0
             if ok: self.sync_members(ch, add=nick)
-            return ok, f"создан пользователь {login} ({nick})"
-        self.danger(f"создать пользователя {login} ({nick})", s, run)
+            return ok, tr('создан пользователь {p0} ({p1})', p0=login, p1=nick)
+        self.danger(tr('создать пользователя {p0} ({p1})', p0=login, p1=nick), s, run)
 
     def check_procs(self, s):
-        ch = self.session(f"проверка процессов {s['name']} (только чтение)")
+        ch = self.session(tr('проверка процессов {p0} (только чтение)', p0=s['name']))
         if not ch: return
         f = "~/.ssh-storage-proc.out"
         try:
@@ -2059,47 +2768,47 @@ class PC:
             except (OSError, ConnectionError, ValueError): pass
         except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: print(red(f"✗ {e}")); pause(); return
         finally: ch.close()
-        if "==END==" not in (out or ""): print(red("✗ Не удалось выполнить проверку (нужен root или sudo)")); pause(); return
+        if "==END==" not in (out or ""): print(red(tr("✗ Не удалось выполнить проверку (нужен root или sudo)"))); pause(); return
         bases = self.d.setdefault("proc_base", {}); base = bases.get(self.skey(s))
         found, hidden, ports, shas = analyze_procs(out, base)
-        header(f"проверка процессов · {s['name']}")
+        header(tr('проверка процессов · {p0}', p0=s['name']))
         icon = {"crit": red("✗"), "warn": yellow("⚠"), "info": cyan("•")}
         for lv, e, why, pr in found:
-            print(f"  {icon[lv]} {bold(e)}\n      {why}\n      {dim(', '.join(pr[:5]) + (f' и ещё {len(pr) - 5}' if len(pr) > 5 else ''))}")
-        for pid, comm in hidden: print(f"  {red('✗')} {bold(comm)} (pid {pid}) скрыт от ps — признак руткита")
-        if not found and not hidden: print(green("  Подозрительного не найдено."))
-        print("\n" + bold("Открытые порты") + dim("  (кто слушает входящие подключения)"))
+            print(f"  {icon[lv]} {bold(e)}\n      {why}\n      {dim(', '.join(pr[:5]) + (tr(' и ещё {p0}', p0=len(pr) - 5) if len(pr) > 5 else ''))}")
+        for pid, comm in hidden: print(tr('  {p0} {p1} (pid {p2}) скрыт от ps — признак руткита', p0=red('✗'), p1=bold(comm), p2=pid))
+        if not found and not hidden: print(green(tr("  Подозрительного не найдено.")))
+        print("\n" + bold(tr("Открытые порты")) + dim(tr("  (кто слушает входящие подключения)")))
         for proto, port, name in ports: print(f"  {proto:<4} {port:>6}  {name or dim('?')}")
-        if base is None: print(yellow("\nЭталона ещё нет: если сейчас всё ваше — нажмите «Доверять», и в следующий раз будут видны новые программы."))
+        if base is None: print(yellow(tr("\nЭталона ещё нет: если сейчас всё ваше — нажмите «Доверять», и в следующий раз будут видны новые программы.")))
         print()
-        a = menu(["Доверять: запомнить текущие программы как нормальные", "Назад"], default=2)
-        if a == "1": bases[self.skey(s)] = shas; self.save(); print(green(f"✓ Запомнено программ: {len(shas)}")); pause()
+        a = menu([tr("Доверять: запомнить текущие программы как нормальные"), tr("Назад")], default=2)
+        if a == "1": bases[self.skey(s)] = shas; self.save(); print(green(tr('✓ Запомнено программ: {p0}', p0=len(shas)))); pause()
 
     def reboot(self, s):
-        if not yes(red(f"Перезагрузить {s['name']}? Все подключения и работающие программы прервутся.")): return
+        if not yes(red(tr('Перезагрузить {p0}? Все подключения и работающие программы прервутся.', p0=s['name']))): return
         # ssh обрывается вместе с сервером (код 255) — это не ошибка
         cmd = 'S=""; [ "$(id -u)" = 0 ] || S=sudo; $S systemctl reboot || $S reboot'
-        if not self.danger("перезагрузить сервер", s, lambda ch: (
-                self.phone_ssh(ch, s, "sh -c " + shlex.quote(cmd), tty=True)[0] in (0, 255), "команда перезагрузки отправлена"), wait=False):
+        if not self.danger(tr("перезагрузить сервер"), s, lambda ch: (
+                self.phone_ssh(ch, s, "sh -c " + shlex.quote(cmd), tty=True)[0] in (0, 255), tr("команда перезагрузки отправлена")), wait=False):
             pause(); return
-        print(dim("Жду, пока сервер выключится и снова ответит по SSH… (Ctrl+C — перестать ждать)"))
+        print(dim(tr("Жду, пока сервер выключится и снова ответит по SSH… (Ctrl+C — перестать ждать)")))
         try:
             down = False; t = time.time()
             while time.time() - t < 600:
                 try: up = ssh_alive(s)
                 except subprocess.TimeoutExpired: up = False
                 if not up: down = True
-                elif down: print(green(f"✓ Сервер снова в сети ({int(time.time() - t)} с)")); break
+                elif down: print(green(tr('✓ Сервер снова в сети ({p0} с)', p0=int(time.time() - t)))); break
                 elif time.time() - t > 90:  # команда принята (ssh оборвался или 0), а падение не застали — быстрая перезагрузка
-                    print(green("✓ Сервер в сети") + dim(" (момент перезагрузки не застали — она была быстрой)")); break
+                    print(green(tr("✓ Сервер в сети")) + dim(tr(" (момент перезагрузки не застали — она была быстрой)"))); break
                 time.sleep(3)
-            else: print(red("✗ Сервер не вернулся за 10 минут. Проверьте его через панель хостинга."))
-        except KeyboardInterrupt: print(yellow("\nОжидание прервано."))
+            else: print(red(tr("✗ Сервер не вернулся за 10 минут. Проверьте его через панель хостинга.")))
+        except KeyboardInterrupt: print(yellow(tr("\nОжидание прервано.")))
         pause()
 
     def danger(self, reason, s, run, wait=True):
         """Опасное действие: отдельный сеанс с причиной на телефоне, run(ch) -> (ok, отчёт), отчёт — в журнал телефона."""
-        header("опасное действие")
+        header(tr("опасное действие"))
         print(yellow(f"  {reason} — {s['name']}\n"))
         ch = self.session(f"{reason} — {s['name']}", danger=True)
         if not ch: return False
@@ -2116,11 +2825,11 @@ class PC:
             if wait: pause()
 
     def journal(self):
-        header("журнал одобрений")
-        ch = self.session("просмотр журнала одобрений")
+        header(tr("журнал одобрений"))
+        ch = self.session(tr("просмотр журнала одобрений"))
         if not ch: return
         try:
-            header("журнал одобрений"); show_journal(ch.call({"t": "journal"})["log"])
+            header(tr("журнал одобрений")); show_journal(ch.call({"t": "journal"})["log"])
         except (OSError, ConnectionError, ValueError, KeyError) as e: print(red(f"✗ {e}"))
         finally: ch.close()
         pause()
@@ -2129,35 +2838,35 @@ class PC:
     def add_server(self, ch, s, identity=None, opts=None, extra=""):
         """Прописать ключ телефона и резервный ключ на сервер; при успехе сохранить на телефоне."""
         r = ch.call({"t": "add", "server": s})
-        if not r.get("ok"): print(red("✗ Отклонено на телефоне")); return False
+        if not r.get("ok"): print(red(tr("✗ Отклонено на телефоне"))); return False
         cmd = extra + install_cmd(with_nick(r["line"], server_tag(s)), r["recovery"])
         if identity: opts = ["-o", "IdentitiesOnly=yes", "-i", identity]
         opts = opts or []
-        print(dim(f"Захожу на {s['user']}@{s['host']}…"))
+        print(dim(tr('Захожу на {p0}@{p1}…', p0=s['user'], p1=s['host'])))
         p = subprocess.run(ssh_cmd(s, *opts) + ["sh -c " + shlex.quote(cmd)], stdout=subprocess.PIPE, text=True)
         if "SSH-STORAGE-OK" not in (p.stdout or ""):
-            print(red("✗ Не удалось прописать ключи. Можно вручную — выполните на сервере:"))
+            print(red(tr("✗ Не удалось прописать ключи. Можно вручную — выполните на сервере:")))
             print(cyan(cmd))
             # сохранить с пометкой: по ID на сервере потом видно, установилась ли строка
             ch.call({"t": "added", "server": dict(s, pending=True)})
             self.cache([x for x in self.d["servers"] if (x["host"], x["user"]) != (s["host"], s["user"])]
                        + [dict(s, pending=True)])
-            print(yellow(f"«{s['name']}» сохранён с пометкой «ключи не установлены» (#{s.get('id')})"))
+            print(yellow(tr('«{p0}» сохранён с пометкой «ключи не установлены» (#{p1})', p0=s['name'], p1=s.get('id'))))
             return False
         s.pop("pending", None)
         ch.call({"t": "added", "server": s})
         self.cache([x for x in self.d["servers"] if (x["host"], x["user"]) != (s["host"], s["user"])] + [s])
-        print(green(f"✓ «{s['name']}»: ключ телефона и резервный ключ прописаны"))
+        print(green(tr('✓ «{p0}»: ключ телефона и резервный ключ прописаны', p0=s['name'])))
         return True
 
     def tunnel(self, s):
-        port = int(ask("Порт панели на сервере", 2053, validate=port_ok))
-        ch = self.session(f"туннель к панели {s['name']}:{port}")
+        port = int(ask(tr("Порт панели на сервере"), 2053, validate=port_ok))
+        ch = self.session(tr('туннель к панели {p0}:{p1}', p0=s['name'], p1=port))
         if not ch: return
         try:
-            print(green(f"Откройте в браузере http://127.0.0.1:{port}/ (путь панели — как обычно). Ctrl+C — закрыть туннель."))
-            print(yellow("Пока туннель открыт, порт доступен и другим программам на этом компьютере — закройте сразу после работы."))
-            print(dim("Подсказка: в 3x-ui можно оставить панель только на 127.0.0.1 — снаружи её не будет видно."))
+            print(green(tr('Откройте в браузере http://127.0.0.1:{p0}/ (путь панели — как обычно). Ctrl+C — закрыть туннель.', p0=port)))
+            print(yellow(tr("Пока туннель открыт, порт доступен и другим программам на этом компьютере — закройте сразу после работы.")))
+            print(dim(tr("Подсказка: в 3x-ui можно оставить панель только на 127.0.0.1 — снаружи её не будет видно.")))
             try: rc, _ = self.phone_ssh(ch, s, opts=("-N", "-L", f"127.0.0.1:{port}:127.0.0.1:{port}"))
             except KeyboardInterrupt: rc = 0
             try: ch.call({"t": "result", "ok": rc != 255})
@@ -2172,7 +2881,8 @@ class PC:
         команда или интерактивный сеанс идут через него без новых подписей."""
         r = ch.call({"t": "list"})
         i = next(n for n, x in enumerate(r["servers"]) if x == s)
-        ch.call({"t": "use", "i": i})
+        if not ch.call({"t": "use", "i": i}).get("ok"):
+            return 255, None
         blob = base64.b64decode(r["line"].split()[1])
         def signer(data):
             resp = ch.call({"t": "sign", "data": data.hex()})
@@ -2210,97 +2920,92 @@ class PC:
 
     def rights_label(self, s):
         lv = self.rights(s)
-        return RIGHTS[lv][0] if lv else "права не проверены"
+        return RIGHTS[lv][0] if lv else tr("права не проверены")
 
     def disable_old(self, ch, s):
-        print(dim("Проверяю вход ключом телефона и отключаю старые ключи…"))
+        print(dim(tr("Проверяю вход ключом телефона и отключаю старые ключи…")))
         rc, out = self.phone_ssh(ch, s, "sh -c " + shlex.quote(DISABLE_OLD_CMD))
         ok = "SSH-STORAGE-OK" in (out or "")
         try: ch.call({"t": "result", "ok": rc != 255})
         except (OSError, ConnectionError, ValueError): pass
         if ok:
-            print(green("✓ Вход телефоном работает; старые ключи закомментированы (копия: authorized_keys.ssh-storage.bak)"))
+            print(green(tr("✓ Вход телефоном работает; старые ключи закомментированы (копия: authorized_keys.ssh-storage.bak)")))
         elif rc == 255:
-            print(red("✗ Вход ключом телефона не прошёл — старые ключи НЕ тронуты"))
+            print(red(tr("✗ Вход ключом телефона не прошёл — старые ключи НЕ тронуты")))
         else:
-            print(red("✗ Не удалось отключить старые ключи — на сервере выполните вручную:")); print(cyan(DISABLE_OLD_CMD))
+            print(red(tr("✗ Не удалось отключить старые ключи — на сервере выполните вручную:"))); print(cyan(DISABLE_OLD_CMD))
         return ok
 
     def new_vps(self):
-        header("новый VPS: настроить с нуля")
-        a = menu(["Только купил сервер: есть root (или пользователь с sudo) и пароль от хостера",
-                  "Мне дали личного пользователя на чужом сервере (без root)", "Назад"], default=1)
+        header(tr("новый VPS: настроить с нуля"))
+        a = menu([tr("Только купил сервер: есть root (или пользователь с sudo) и пароль от хостера"),
+                  tr("Мне дали личного пользователя на чужом сервере (без root)"), tr("Назад")], default=1)
         if a == "2":
-            print(dim("Без root можно только своё: ключ телефона, резервный ключ, TERM в ~/.profile и отключить старые ключи.\n"
-                      "Порт, вход root и пароли сервера настраивает его владелец."))
+            print(dim(tr("Без root можно только своё: ключ телефона, резервный ключ, TERM в ~/.profile и отключить старые ключи.\n"
+                      "Порт, вход root и пароли сервера настраивает его владелец.")))
             return self.add(extra=TERM_CMD + "; ")
         if a != "1": return
-        host = ask("IP / хост", validate=host_ok)
-        old = int(ask("Порт сейчас", 22, validate=port_ok))
-        login = ask("Логин от хостера", "root", validate=user_ok)
-        user = ask("Новый пользователь", validate=lambda v: re.fullmatch(LOGIN_RE, v) and v != "root")
-        port = int(ask("Новый порт SSH", 1024 + secrets.randbelow(64000),
+        host = ask(tr("IP / хост"), validate=host_ok)
+        old = int(ask(tr("Порт сейчас"), 22, validate=port_ok))
+        login = ask(tr("Логин от хостера"), "root", validate=user_ok)
+        user = ask(tr("Новый пользователь"), validate=lambda v: re.fullmatch(LOGIN_RE, v) and v != "root")
+        port = int(ask(tr("Новый порт SSH"), 1024 + secrets.randbelow(64000),
                        validate=lambda v: port_ok(v) and 1024 <= int(v) and int(v) != old))
-        name = ask("Название", host)
+        name = ask(tr("Название"), host)
         s1 = {"name": name, "host": host, "port": old, "user": login}
         if not check_reach(s1): return
         s = new_id({"name": name, "host": host, "port": port, "user": user, "nick": pick_nick({}, self.d["servers"])})
-        print(f"\nПлан для {bold(host)}:\n"
-              f"  1. apt update; создать {user} (sudo с паролем), TERM в ~/.profile\n"
-              + dim("     свежий список пакетов; работать не под root; цвета в терминале") + "\n"
-              f"  2. {user}: ключ телефона и резервный ключ\n"
-              + dim("     вход с телефона; резервный — если телефон потерян") + "\n"
-              f"  3. SSH слушает порты {old} и {port} (пароль пока работает)\n"
-              + dim("     новый порт — меньше ботов; старый — чтобы не запереться") + "\n"
-              f"  4. проверить вход ключом телефона на порт {port}\n"
-              + dim("     убедиться, что новый вход работает") + "\n"
-              f"  5. только после этого: порт {old}, вход root и пароли — отключить\n"
-              + dim("     пароль не подобрать; войти можно только ключом") + "\n"
-              + dim("  Если после шага 5 вход ключом не подтвердится за 3 мин — сервер сам вернёт шаг 3."))
-        if not yes("Продолжить?", True): return
-        ch = self.session(f"новый VPS {name}", danger=True)
+        print(tr('\nПлан для {p0}:\n  1. apt update; создать {p1} (sudo с паролем), TERM в ~/.profile\n', p0=bold(host), p1=user)
+              + dim(tr("     свежий список пакетов; работать не под root; цвета в терминале")) + tr('\n  2. {p0}: ключ телефона и резервный ключ\n', p0=user)
+              + dim(tr("     вход с телефона; резервный — если телефон потерян")) + tr('\n  3. SSH слушает порты {p0} и {p1} (пароль пока работает)\n', p0=old, p1=port)
+              + dim(tr("     новый порт — меньше ботов; старый — чтобы не запереться")) + tr('\n  4. проверить вход ключом телефона на порт {p0}\n', p0=port)
+              + dim(tr("     убедиться, что новый вход работает")) + tr('\n  5. только после этого: порт {p0}, вход root и пароли — отключить\n', p0=old)
+              + dim(tr("     пароль не подобрать; войти можно только ключом")) + "\n"
+              + dim(tr("  Если после шага 5 вход ключом не подтвердится за 3 мин — сервер сам вернёт шаг 3.")))
+        if not yes(tr("Продолжить?"), True): return
+        ch = self.session(tr('новый VPS {p0}', p0=name), danger=True)
         if not ch: return
         try:
             r = ch.call({"t": "add", "server": s})
-            if not r.get("ok"): print(red("✗ Отклонено на телефоне")); pause(); return
+            if not r.get("ok"): print(red(tr("✗ Отклонено на телефоне"))); pause(); return
             inst = install_cmd(with_nick(r["line"], server_tag(s)), r["recovery"])
-            print(dim(f"Захожу на {login}@{host}:{old} — пароль от хостера (и sudo) вводите здесь, программа их не хранит…"))
+            print(dim(tr('Захожу на {p0}@{p1}:{p2} — пароль от хостера (и sudo) вводите здесь, программа их не хранит…', p0=login, p1=host, p2=old)))
             rc = subprocess.call(ssh_cmd(s1, "-t", "-o", "PubkeyAuthentication=no") + [vps_step1(user, old, port, inst)])
-            if rc: print(red(f"✗ Шаг 1–3 не выполнен (код {rc}). Сервер не изменён или изменён частично — вход паролем работает.")); pause(); return
+            if rc: print(red(tr('✗ Шаг 1–3 не выполнен (код {p0}). Сервер не изменён или изменён частично — вход паролем работает.', p0=rc))); pause(); return
             ch.call({"t": "added", "server": s})
             self.cache([x for x in self.d["servers"] if (x["host"], x["user"]) != (host, user)] + [s])
-            print(green(f"✓ {user} создан, ключи прописаны, SSH слушает {old} и {port}"))
-            print(dim(f"Шаг 4–5: вход {user}@{host}:{port} ключом телефона (sudo спросит пароль {user})…"))
+            print(green(tr('✓ {p0} создан, ключи прописаны, SSH слушает {p1} и {p2}', p0=user, p1=old, p2=port)))
+            print(dim(tr('Шаг 4–5: вход {p0}@{p1}:{p2} ключом телефона (sudo спросит пароль {p3})…', p0=user, p1=host, p2=port, p3=user)))
             rc, _ = self.phone_ssh(ch, s, vps_step2(port), tty=True)
-            if rc: print(red(f"✗ Вход ключом телефона или настройка не прошли (код {rc}). Старый вход паролем остался.")); pause(); return
+            if rc: print(red(tr('✗ Вход ключом телефона или настройка не прошли (код {p0}). Старый вход паролем остался.', p0=rc))); pause(); return
             time.sleep(2)
-            print(dim("Проверяю вход заново (новое подключение)…"))
+            print(dim(tr("Проверяю вход заново (новое подключение)…")))
             rc, out = self.phone_ssh(ch, s, "touch ~/.ssh-storage-ok && echo SSH-STORAGE-OK")
             try: ch.call({"t": "result", "ok": "SSH-STORAGE-OK" in (out or "")})
             except (OSError, ConnectionError, ValueError): pass
             if "SSH-STORAGE-OK" in (out or ""):
-                print(green(f"✓ Готово: вход только {user}@{host}:{port} ключом телефона (или резервным). Root и пароли отключены."))
+                print(green(tr('✓ Готово: вход только {p0}@{p1}:{p2} ключом телефона (или резервным). Root и пароли отключены.', p0=user, p1=host, p2=port)))
             else:
-                print(red(f"✗ Новый вход не подтвердился — через 3 мин сервер сам вернёт порты {old}, {port} и вход паролем."))
+                print(red(tr('✗ Новый вход не подтвердился — через 3 мин сервер сам вернёт порты {p0}, {p1} и вход паролем.', p0=old, p1=port)))
         except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: print(red(f"✗ {e}"))
         finally: ch.close()
         pause()
 
     def add(self, extra=""):
-        header("новый сервер")
+        header(tr("новый сервер"))
         s = edit_server(servers=self.d["servers"])
         if not check_reach(s): return
         opts, tmp = first_login()
         if opts is None: return
-        print("\nДругие ключи в ~/.ssh/authorized_keys на сервере — те, которыми вы входили раньше")
-        print(dim("(ключи с компьютеров, другие ssh-ключи; ключи телефонов, резервный и участников команды не затрагиваются):"))
-        old = menu(["Оставить — они продолжат работать, просто добавится ключ телефона",
-                    "Отключить — входить ими станет нельзя. Строки не удаляются: в начало ставится «#»,\n"
+        print(tr("\nДругие ключи в ~/.ssh/authorized_keys на сервере — те, которыми вы входили раньше"))
+        print(dim(tr("(ключи с компьютеров, другие ssh-ключи; ключи телефонов, резервный и участников команды не затрагиваются):")))
+        old = menu([tr("Оставить — они продолжат работать, просто добавится ключ телефона"),
+                    tr("Отключить — входить ими станет нельзя. Строки не удаляются: в начало ставится «#»,\n"
                     "      вернуть можно, убрав «#» или из копии authorized_keys.ssh-storage.bak.\n"
-                    "      Делается только после того, как вход телефоном проверен."])
+                    "      Делается только после того, как вход телефоном проверен.")])
         disable_old = old == "2"
         try:
-            ch = self.session(f"добавить сервер {s['name']}")
+            ch = self.session(tr('добавить сервер {p0}', p0=s['name']))
             if not ch: return
             try:
                 if self.add_server(ch, s, opts=opts, extra=extra) and disable_old: self.disable_old(ch, s)
@@ -2311,22 +3016,22 @@ class PC:
             if tmp: shutil.rmtree(tmp, ignore_errors=True)
 
     def bulk_add(self):
-        header("массовое добавление")
-        a = menu(["Из файла (строки: имя хост [порт] [пользователь])", "Из ~/.ssh/config",
-                  "Вставить списком", "Назад"], default=1)
+        header(tr("массовое добавление"))
+        a = menu([tr("Из файла (строки: имя хост [порт] [пользователь])"), tr("Из ~/.ssh/config"),
+                  tr("Вставить списком"), tr("Назад")], default=1)
         if a == "1":
-            path = os.path.expanduser(ask("Путь к файлу"))
-            if not os.path.isfile(path): print(red("✗ Файл не найден")); pause(); return
+            path = os.path.expanduser(ask(tr("Путь к файлу")))
+            if not os.path.isfile(path): print(red(tr("✗ Файл не найден"))); pause(); return
             sv, bad = parse_servers(open(path, errors="replace").read())
         elif a == "2": sv, bad = ssh_config_servers()
         elif a == "3":
-            print(dim("Строки «имя хост [порт] [пользователь]», пустая строка — конец:"))
+            print(dim(tr("Строки «имя хост [порт] [пользователь]», пустая строка — конец:")))
             lines = []
             while (l := input()).strip(): lines.append(l)
             sv, bad = parse_servers("\n".join(lines))
         else: return
-        header("массовое добавление")
-        print(dim("Проверяю доступность…"))
+        header(tr("массовое добавление"))
+        print(dim(tr("Проверяю доступность…")))
         down = {}
         with concurrent.futures.ThreadPoolExecutor(16) as ex:
             for x, why in zip(sv, ex.map(reachable, sv)):
@@ -2334,13 +3039,13 @@ class PC:
         for x in sv:
             why = down.get((x["name"], x["host"]))
             print("  " + server_line(x) + (red(f"  ✗ {why}") if why else green("  ✓")))
-        for b in bad: print(red("  ✗ пропущено, неверный формат — " + b))
-        if not sv: print(yellow("Нечего добавлять.")); pause(); return
+        for b in bad: print(red(tr("  ✗ пропущено, неверный формат — ") + b))
+        if not sv: print(yellow(tr("Нечего добавлять."))); pause(); return
         print(); nick = pick_nick({}, self.d["servers"])
         sv = [new_id(dict(x, nick=nick)) for x in sv]
-        print("\nСпособ первого входа:")
-        per = menu(["Общий для всех серверов", "Свой для каждого сервера"], default=1) == "2"
-        if down and not yes(yellow(f"Недоступно: {len(down)}. Добавить их всё равно (сохранятся с пометкой)?")):
+        print(tr("\nСпособ первого входа:"))
+        per = menu([tr("Общий для всех серверов"), tr("Свой для каждого сервера")], default=1) == "2"
+        if down and not yes(yellow(tr('Недоступно: {p0}. Добавить их всё равно (сохранятся с пометкой)?', p0=len(down)))):
             sv = [x for x in sv if (x["name"], x["host"]) not in down]
             if not sv: return
         logins, tmps = {}, []
@@ -2352,43 +3057,43 @@ class PC:
                 o = first_login() if per else common
                 if o[1]: tmps.append(o[1])
                 logins[x["name"], x["host"]] = o[0]  # None — пропустить сервер
-            ch = self.session(f"добавить серверы ({len(sv)})")
+            ch = self.session(tr('добавить серверы ({p0})', p0=len(sv)))
             if not ch: return
             done, fail = [], []
             try:
                 if not ch.call({"t": "add_many", "servers": sv}).get("ok"):
-                    print(red("✗ Отклонено на телефоне")); pause(); return
+                    print(red(tr("✗ Отклонено на телефоне"))); pause(); return
                 for x in sv:
                     o = logins[x["name"], x["host"]]
-                    if o is None: fail.append((x, "пропущен (отмена входа)")); continue
+                    if o is None: fail.append((x, tr("пропущен (отмена входа)"))); continue
                     print(bold(f"\n→ {x['name']}"))
                     try:
                         if self.add_server(ch, x, opts=o): done.append(x)
-                        else: fail.append((x, "не удалось прописать ключи (вход или права)"))
+                        else: fail.append((x, tr("не удалось прописать ключи (вход или права)")))
                     except (OSError, ConnectionError, ValueError, KeyError) as e: fail.append((x, str(e)))
             finally: ch.close()
-            header("итог массового добавления")
-            print(green(f"  Добавлено: {len(done)}"))
+            header(tr("итог массового добавления"))
+            print(green(tr('  Добавлено: {p0}', p0=len(done))))
             for x in done: print("    " + server_line(x))
-            if fail or bad: print(red(f"  Не добавлено: {len(fail) + len(bad)}"))
+            if fail or bad: print(red(tr('  Не добавлено: {p0}', p0=len(fail) + len(bad))))
             for x, why in fail: print(f"    {server_line(x)}  {red(why)}")
-            for b in bad: print(f"    {red(b)}  {dim('неверный формат')}")
+            for b in bad: print(f"    {red(b)}  {dim(tr('неверный формат'))}")
         finally:
             for t in tmps: shutil.rmtree(t, ignore_errors=True)
         pause()
 
     def add_member_many(self):
-        header("участник → серверы")
+        header(tr("участник → серверы"))
         sv = [x for x in self.d["servers"] if server_ok(x)]
-        if not sv: print(yellow("Список серверов пуст.")); pause(); return
+        if not sv: print(yellow(tr("Список серверов пуст."))); pause(); return
         login, nick, key, role = self.ask_member()
         for n, x in enumerate(sv, 1): print(f"  {n}. {server_line(x)}")
-        nums = re.split(r"[\s,]+", input(blue("\nНомера серверов через запятую или пробел (Enter — отмена): ")).strip())
+        nums = re.split(r"[\s,]+", input(blue(tr("\nНомера серверов через запятую или пробел (Enter — отмена): "))).strip())
         sel = [sv[n - 1] for n in sorted({int(n) for n in nums if n.isdigit() and 1 <= int(n) <= len(sv)})]
         if not sel: return
-        print(yellow(f"\nПользователь {login} (участник {nick}) на серверах: {', '.join(x['name'] for x in sel)}"))
-        if not yes(red("Выполнить?")): return
-        ch = self.session(f"добавить участника {nick} ({login}) на серверы ({len(sel)})", danger=True)
+        print(yellow(tr('\nПользователь {p0} (участник {p1}) на серверах: {p2}', p0=login, p1=nick, p2=', '.join(x['name'] for x in sel))))
+        if not yes(red(tr("Выполнить?"))): return
+        ch = self.session(tr('добавить участника {p0} ({p1}) на серверы ({p2})', p0=nick, p1=login, p2=len(sel)), danger=True)
         if not ch: return
         done, fail = [], []
         try:
@@ -2396,40 +3101,39 @@ class PC:
                 print(bold(f"\n→ {x['name']}"))
                 try: (done if self.phone_ssh(ch, x, "sh -c " + shlex.quote(member_cmd(login, key, nick, role)), tty=True)[0] == 0 else fail).append(x)
                 except (OSError, ConnectionError, ValueError, KeyError, StopIteration): fail.append(x)
-            text = f"участник {nick} ({login}): добавлен на {len(done)}, не добавлен на {len(fail)}"
+            text = tr('участник {p0} ({p1}): добавлен на {p2}, не добавлен на {p3}', p0=nick, p1=login, p2=len(done), p3=len(fail))
             try: ch.call({"t": "report", "ok": not fail, "text": text})
             except (OSError, ConnectionError, ValueError): pass
             if done: self.sync_members(ch, add=nick)
         finally: ch.close()
-        header("итог")
-        print(green(f"  Добавлен: {len(done)}")); [print("    " + server_line(x)) for x in done]
-        if fail: print(red(f"  Не добавлен: {len(fail)} (недоступен, отказ sudo или логин занят)")); [print("    " + server_line(x)) for x in fail]
+        header(tr("итог"))
+        print(green(tr('  Добавлен: {p0}', p0=len(done)))); [print("    " + server_line(x)) for x in done]
+        if fail: print(red(tr('  Не добавлен: {p0} (недоступен, отказ sudo или логин занят)', p0=len(fail)))); [print("    " + server_line(x)) for x in fail]
         pause()
 
     def revoke_member(self):
-        header("отозвать участника")
+        header(tr("отозвать участника"))
         sv = [x for x in self.d["servers"] if server_ok(x) and not x.get("pending")]
-        if not sv: print(yellow("Список серверов пуст.")); pause(); return
+        if not sv: print(yellow(tr("Список серверов пуст."))); pause(); return
         known = self.d.get("members", [])
-        if known: print(dim("Добавленные через это меню (можно ввести номер):")); [print(f"  {n}. {k}") for n, k in enumerate(known, 1)]
-        nick = ask("Ник участника", validate=lambda v: bool(re.fullmatch(NICK_RE, v)) or v.isdigit() and 1 <= int(v) <= len(known))
+        if known: print(dim(tr("Добавленные через это меню (можно ввести номер):"))); [print(f"  {n}. {k}") for n, k in enumerate(known, 1)]
+        nick = ask(tr("Ник участника"), validate=lambda v: bool(re.fullmatch(NICK_RE, v)) or v.isdigit() and 1 <= int(v) <= len(known))
         if nick.isdigit() and 1 <= int(nick) <= len(known): nick = known[int(nick) - 1]
-        n_all = len(sv); sv = pick_many(sv, "Где")
+        n_all = len(sv); sv = pick_many(sv, tr("Где"))
         if not sv: return
-        full = menu(["Только снять ключи — пользователь и его файлы останутся",
-                     "Удалить полностью — пользователя, его папку и ключи (необратимо)", "Назад"], default=1)
+        full = menu([tr("Только снять ключи — пользователь и его файлы останутся"),
+                     tr("Удалить полностью — пользователя, его папку и ключи (необратимо)"), tr("Назад")], default=1)
         if full not in ("1", "2"): return
         full = full == "2"
         if full:
-            print(red(f"\nНа {', '.join(x['name'] for x in sv)} будут удалены пользователи участника {nick} и все их файлы. Вернуть нельзя."))
-            print(dim("Удаляются только созданные через меню участников; ваш пользователь и root — никогда."))
-            if input(red(f"Для подтверждения введите ник {nick}: ")).strip() != nick: return
+            print(red(tr('\nНа {p0} будут удалены пользователи участника {p1} и все их файлы. Вернуть нельзя.', p0=', '.join(x['name'] for x in sv), p1=nick)))
+            print(dim(tr("Удаляются только созданные через меню участников; ваш пользователь и root — никогда.")))
+            if input(red(tr('Для подтверждения введите ник {p0}: ', p0=nick))).strip() != nick: return
         else:
-            print(yellow(f"\nУчастник {nick} на {', '.join(x['name'] for x in sv)}: ключи снять, вход заблокировать, "
-                         "открытые сеансы закрыть, sudo снять. Пользователь и файлы останутся; вернуть — «Добавить участника»."))
-            if not yes(red("Отозвать?")): return
+            print(yellow(tr('\nУчастник {p0} на {p1}: ключи снять, вход заблокировать, открытые сеансы закрыть, sudo снять. Пользователь и файлы останутся; вернуть — «Добавить участника».', p0=nick, p1=', '.join(x['name'] for x in sv))))
+            if not yes(red(tr("Отозвать?"))): return
         cmd = delete_member_cmd(nick) if full else revoke_cmd(nick)
-        ch = self.session(f"{'удалить' if full else 'отозвать'} участника {nick} на серверах ({len(sv)})", danger=True)
+        ch = self.session(tr('{p0} участника {p1} на серверах ({p2})', p0=tr('удалить') if full else tr('отозвать'), p1=nick, p2=len(sv)), danger=True)
         if not ch: return
         res = []
         try:
@@ -2437,86 +3141,86 @@ class PC:
                 print(bold(f"\n→ {x['name']}"))
                 try:
                     rc = self.phone_ssh(ch, x, "sh -c " + shlex.quote(cmd), tty=True)[0]
-                    res.append((x, {0: "удалено" if full else "снято", 3: "участника не было"}.get(rc)))
+                    res.append((x, {0: tr("удалено") if full else tr("снято"), 3: tr("участника не было")}.get(rc)))
                 except (OSError, ConnectionError, ValueError, KeyError, StopIteration): res.append((x, None))
             bad = [x for x, w in res if w is None]
-            try: ch.call({"t": "report", "ok": not bad, "text": f"отзыв {nick}: не выполнен на {len(bad)} из {len(res)}"})
+            try: ch.call({"t": "report", "ok": not bad, "text": tr('отзыв {p0}: не выполнен на {p1} из {p2}', p0=nick, p1=len(bad), p2=len(res))})
             except (OSError, ConnectionError, ValueError): pass
             self.sync_members(ch, drop=nick if full and not bad and len(sv) == n_all else None)  # удалён не везде — ник остаётся
         finally: ch.close()
-        header(f"итог отзыва · {nick}")
-        for x, w in res: print(f"  {server_line(x)}  " + (green(w) if w else red("не выполнено (недоступен или отказ sudo) — повторите")))
+        header(tr('итог отзыва · {p0}', p0=nick))
+        for x, w in res: print(f"  {server_line(x)}  " + (green(w) if w else red(tr("не выполнено (недоступен или отказ sudo) — повторите"))))
         pause()
 
     def bulk_delete(self):
-        header("массовое удаление")
+        header(tr("массовое удаление"))
         sv = [x for x in self.d["servers"] if server_ok(x)]
-        if not sv: print(yellow("Список серверов пуст.")); pause(); return
+        if not sv: print(yellow(tr("Список серверов пуст."))); pause(); return
         for n, x in enumerate(sv, 1): print(f"  {n}. {server_line(x)}")
-        nums = re.split(r"[\s,]+", input(blue("\nНомера через запятую или пробел (Enter — отмена): ")).strip())
+        nums = re.split(r"[\s,]+", input(blue(tr("\nНомера через запятую или пробел (Enter — отмена): "))).strip())
         pick = sorted({int(n) for n in nums if n.isdigit() and 1 <= int(n) <= len(sv)})
         if not pick: return
         sel = [sv[n - 1] for n in pick]
-        header("массовое удаление")
+        header(tr("массовое удаление"))
         for x in sel: print("  " + server_line(x))
-        mode = menu(["Только из списка (ключи на серверах остаются)",
-                     "Из списка + снять ключ телефона и резервный с серверов", "Отмена"], default=1)
+        mode = menu([tr("Только из списка (ключи на серверах остаются)"),
+                     tr("Из списка + снять ключ телефона и резервный с серверов"), tr("Отмена")], default=1)
         if mode not in ("1", "2"): return
         keys = mode == "2"
-        if keys: print(yellow("⚠ Ключ телефона и резервный будут сняты: войти на эти серверы через ssh-storage станет нельзя."))
-        if not yes(red(f"Удалить серверов: {len(sel)}?")): return
-        ch = self.session(f"удалить серверы ({len(sel)})" + (" и снять ключи" if keys else ""), danger=keys)
+        if keys: print(yellow(tr("⚠ Ключ телефона и резервный будут сняты: войти на эти серверы через ssh-storage станет нельзя.")))
+        if not yes(red(tr('Удалить серверов: {p0}?', p0=len(sel)))): return
+        ch = self.session(tr('удалить серверы ({p0})', p0=len(sel)) + (tr(" и снять ключи") if keys else ""), danger=keys)
         if not ch: return
         done, fail = [], []
         try:
             r = ch.call({"t": "list"})
             sel = [x for x in sel if x in r["servers"]]  # список мог измениться на телефоне
             if not ch.call({"t": "delete_many", "servers": sel, "keys": keys}).get("ok"):
-                print(red("✗ Отклонено на телефоне")); pause(); return
+                print(red(tr("✗ Отклонено на телефоне"))); pause(); return
             for x in sel:
                 if not keys: done.append(x); continue
                 print(bold(f"\n→ {x['name']}"))
                 try:
                     _, out = self.phone_ssh(ch, x, "sh -c " + shlex.quote(remove_keys_cmd(r["line"], r["recovery"])))
                     if "SSH-STORAGE-OK" in (out or ""): done.append(x)
-                    else: fail.append((x, "ключи не сняты (сервер недоступен или вход не прошёл) — оставлен в списке"))
+                    else: fail.append((x, tr("ключи не сняты (сервер недоступен или вход не прошёл) — оставлен в списке")))
                 except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: fail.append((x, str(e)))
             ch.call({"t": "delete_done", "servers": done})
             self.cache([x for x in r["servers"] if x not in done])
         except (OSError, ConnectionError, ValueError, KeyError) as e: print(red(f"✗ {e}"))
         finally: ch.close()
-        header("итог массового удаления")
-        print(green(f"  Удалено: {len(done)}"))
+        header(tr("итог массового удаления"))
+        print(green(tr('  Удалено: {p0}', p0=len(done))))
         for x in done: print("    " + server_line(x))
-        if fail: print(red(f"  Не удалено: {len(fail)}"))
+        if fail: print(red(tr('  Не удалено: {p0}', p0=len(fail))))
         for x, why in fail: print(f"    {server_line(x)}  {red(why)}")
         pause()
 
     def rekey(self):
         """Перевыпуск: 1) старым ключом дописать новые на все серверы; 2) телефон переключается на новые;
         3) новым ключом снять старые (это же проверка нового ключа)."""
-        header("перевыпуск ключей")
-        print(dim("Один ключ на устройство: перевыпуск действует сразу на всех серверах из списка.\n"))
-        what = menu(["Ключ телефона", "Резервный ключ (новый резервный пароль)", "Оба", "Назад"], default=1)
+        header(tr("перевыпуск ключей"))
+        print(dim(tr("Один ключ на устройство: перевыпуск действует сразу на всех серверах из списка.\n")))
+        what = menu([tr("Ключ телефона"), tr("Резервный ключ (новый резервный пароль)"), tr("Оба"), tr("Назад")], default=1)
         if what not in ("1", "2", "3"): return
         phone, rec = what in ("1", "3"), what in ("2", "3")
-        if rec and self.d["recovery"] == "": print(yellow("Резервного ключа у участника команды нет — он у админа.")); pause(); return
-        mode = menu(["Добавить: остальные ключи на серверах не трогать",
-                     "Затереть: оставить на серверах только ключи ssh-storage этого телефона", "Назад"], default=1)
+        if rec and self.d["recovery"] == "": print(yellow(tr("Резервного ключа у участника команды нет — он у админа."))); pause(); return
+        mode = menu([tr("Добавить: остальные ключи на серверах не трогать"),
+                     tr("Затереть: оставить на серверах только ключи ssh-storage этого телефона"), tr("Назад")], default=1)
         if mode not in ("1", "2"): return
         wipe = mode == "2"
         sv = [x for x in self.d["servers"] if server_ok(x)]
-        if not sv: print(yellow("Список серверов пуст.")); pause(); return
-        header("перевыпуск ключей — сводка")
-        print(f"  Перевыпустить: {bold(', '.join(w for w, on in (('ключ телефона', phone), ('резервный ключ', rec)) if on))}")
-        print(f"  Режим: {red('затереть остальные ключи') if wipe else 'добавить'}")
-        print(f"  Серверы ({len(sv)}):")
+        if not sv: print(yellow(tr("Список серверов пуст."))); pause(); return
+        header(tr("перевыпуск ключей — сводка"))
+        print(tr('  Перевыпустить: {p0}', p0=bold(', '.join(w for w, on in ((tr('ключ телефона'), phone), (tr('резервный ключ'), rec)) if on))))
+        print(tr('  Режим: {p0}', p0=red(tr('затереть остальные ключи')) if wipe else tr('добавить')))
+        print(tr('  Серверы ({p0}):', p0=len(sv)))
         for x in sv: print("    " + server_line(x))
-        if rec: print(yellow("\n⚠ Старый резервный пароль перестанет работать — будет показан новый."))
-        if wipe: print(red("⚠ Чужие ключи на серверах будут удалены (список — после проверки серверов)."))
-        if input(red("\nДля подтверждения введите ПЕРЕВЫПУСК: ")).strip().upper() != "ПЕРЕВЫПУСК": return
+        if rec: print(yellow(tr("\n⚠ Старый резервный пароль перестанет работать — будет показан новый.")))
+        if wipe: print(red(tr("⚠ Чужие ключи на серверах будут удалены (список — после проверки серверов).")))
+        if input(red(tr("\nДля подтверждения введите ПЕРЕВЫПУСК: "))).strip().upper() not in (tr("ПЕРЕВЫПУСК").upper(), "ПЕРЕВЫПУСК"): return
         new_rec = self.new_recovery() if rec else None
-        ch = self.session("перевыпуск ключей на всех серверах", danger=True)
+        ch = self.session(tr("перевыпуск ключей на всех серверах"), danger=True)
         if not ch: return
         done, fail = [], []
         try:
@@ -2533,63 +3237,63 @@ class PC:
                     other = [f for f in other if not {ob, orb} & set(f)]
                     if not other: continue
                     nicks = sorted({f[-1].split(":")[1] for f in other if f[-1].startswith(PHONE_TAG + ":")})
-                    warn.append(f"{x['name']}: потеряют доступ ключей — {len(other)}"
-                                + (f" (участники: {', '.join(nicks)})" if nicks else ""))
+                    warn.append(tr('{p0}: потеряют доступ ключей — {p1}', p0=x['name'], p1=len(other))
+                                + (tr(' (участники: {p0})', p0=', '.join(nicks)) if nicks else ""))
                 for w in warn: print(red("  ⚠ " + w))
-                if warn and not yes(red("Участники выше потеряют доступ. Продолжить?")): return
+                if warn and not yes(red(tr("Участники выше потеряют доступ. Продолжить?"))): return
             resp = ch.call({"t": "rekey", "phone": phone, "recovery": new_rec, "wipe": wipe, "warn": warn})
             if not resp.get("ok"):
-                print(red("✗ Отклонено на телефоне") + (yellow(" — новый резервный пароль не применён, действует старый") if rec else ""))
+                print(red(tr("✗ Отклонено на телефоне")) + (yellow(tr(" — новый резервный пароль не применён, действует старый")) if rec else ""))
                 pause(); return
             new_line = resp.get("line") or r["line"]
             new_b = ([new_line.split()[1]] if phone else []) + ([new_rec.split()[1]] if rec else [])
             ok1 = []
             for x in sv:  # 1) старым ключом: дописать новые
-                print(bold(f"→ {x['name']}: новые ключи"))
+                print(bold(tr('→ {p0}: новые ключи', p0=x['name'])))
                 add = ([with_nick(new_line, server_tag(x))] if phone else []) + ([new_rec] if rec else [])
                 try: res = run(x, keys_cmd(add=add, keep=[k for k in (ob, orb) if k != "-"] if wipe else None))
                 except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: res = str(e)
-                (ok1.append(x) if "SSH-STORAGE-OK" in res else fail.append((x, "новые ключи не записаны (сервер недоступен?)")))
+                (ok1.append(x) if "SSH-STORAGE-OK" in res else fail.append((x, tr("новые ключи не записаны (сервер недоступен?)"))))
             if fail:
                 for x, why in fail: print(red(f"  ✗ {x['name']}: {why}"))
-                print(yellow("На них останутся только старые ключи" + (": вход телефоном туда пропадёт, останется резервный пароль" if phone else "") + "."))
-                if not yes(red("Всё равно перейти на новые ключи?")):
+                print(yellow(tr("На них останутся только старые ключи") + (tr(": вход телефоном туда пропадёт, останется резервный пароль") if phone else "") + "."))
+                if not yes(red(tr("Всё равно перейти на новые ключи?"))):
                     for x in ok1:  # откат: убрать дописанные новые ключи
                         try: run(x, keys_cmd(drop=new_b))
                         except (OSError, ConnectionError, ValueError, KeyError, StopIteration): pass
-                    print(dim("Отменено, новые ключи убраны с серверов.")); pause(); return
-            if not ch.call({"t": "rekey_commit"}).get("ok"): print(red("✗ Телефон не применил новые ключи")); pause(); return
+                    print(dim(tr("Отменено, новые ключи убраны с серверов."))); pause(); return
+            if not ch.call({"t": "rekey_commit"}).get("ok"): print(red(tr("✗ Телефон не применил новые ключи"))); pause(); return
             if rec: self.d["recovery"] = new_rec; self.save()
             r2 = ch.call({"t": "list"}); self.cache(r2["servers"])
             for x in ok1:  # 3) новым ключом: снять старые
-                print(bold(f"→ {x['name']}: снять старые ключи"))
+                print(bold(tr('→ {p0}: снять старые ключи', p0=x['name'])))
                 drop = ([ob] if phone else []) + ([orb] if rec else [])
                 try: res = run(x, keys_cmd(drop=drop, backup=False))  # копия — состояние до перевыпуска
                 except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: res = str(e)
                 (done.append(x) if "SSH-STORAGE-OK" in res
-                 else fail.append((x, "новый ключ записан, но вход им не прошёл — старый не снят")))
-            try: ch.call({"t": "report", "ok": not fail, "text": f"перевыпуск: готово {len(done)}, ошибок {len(fail)}"})
+                 else fail.append((x, tr("новый ключ записан, но вход им не прошёл — старый не снят"))))
+            try: ch.call({"t": "report", "ok": not fail, "text": tr('перевыпуск: готово {p0}, ошибок {p1}', p0=len(done), p1=len(fail))})
             except (OSError, ConnectionError, ValueError): pass
         except (OSError, ConnectionError, ValueError, KeyError) as e: print(red(f"✗ {e}"))
         finally: ch.close()
-        header("итог перевыпуска")
-        print(green(f"  Готово: {len(done)}"))
+        header(tr("итог перевыпуска"))
+        print(green(tr('  Готово: {p0}', p0=len(done))))
         for x in done: print("    " + server_line(x))
-        if fail: print(red(f"  С ошибками: {len(fail)}"))
+        if fail: print(red(tr('  С ошибками: {p0}', p0=len(fail))))
         for x, why in fail: print(f"    {server_line(x)}  {red(why)}")
         pause()
 
     # --- восстановление ---
     def recovery(self):
-        header("восстановление")
-        print("Вход резервным ключом из 20-символьного пароля.\n")
+        header(tr("восстановление"))
+        print(tr("Вход резервным ключом из 20-символьного пароля.\n"))
         while True:
-            pw = getpass.getpass(blue("Резервный пароль (Enter — отмена): "))
+            pw = getpass.getpass(blue(tr("Резервный пароль (Enter — отмена): ")))
             if not pw: return
-            print(dim("Вычисляю ключ…"))
+            print(dim(tr("Вычисляю ключ…")))
             seed = recovery_seed(pw)
             if self.d["recovery"] and recovery_line(seed) != self.d["recovery"]:
-                print(red("✗ Не тот пароль\n")); continue
+                print(red(tr("✗ Не тот пароль\n"))); continue
             break
         if not self.d["recovery"]: self.d["recovery"] = recovery_line(seed); self.save()
         tmp = tempfile.mkdtemp(prefix="sshstore-", dir=RAM)
@@ -2598,32 +3302,64 @@ class PC:
         with os.fdopen(fd, "w") as f: f.write(openssh_ed25519_private(seed, RECOVERY_TAG))
         try:
             while True:
-                header("восстановление")
+                header(tr("восстановление"))
                 sv = self.d["servers"]
-                ch = menu([server_line(s) for s in sv] + ["Другой сервер…", dim("Назад")])
+                ch = menu([server_line(s) for s in sv] + [tr("Другой сервер…"), dim(tr("Назад"))])
                 if ch == str(len(sv) + 2): return
-                if ch == str(len(sv) + 1): header("сервер"); s = edit_server()
+                if ch == str(len(sv) + 1): header(tr("сервер")); s = edit_server()
                 elif ch.isdigit() and 1 <= int(ch) <= len(sv): s = sv[int(ch) - 1]
                 else: continue
-                a = menu(["Подключиться резервным ключом", "Привязать сопряжённый телефон к этому серверу", "Назад"])
+                a = menu([tr("Подключиться резервным ключом"), tr("Привязать сопряжённый телефон к этому серверу"), tr("Назад")])
                 if a == "1":
                     clear(); subprocess.call(ssh_cmd(s, "-o", "IdentitiesOnly=yes", "-i", key)); pause()
                 elif a == "2":
-                    c2 = self.session(f"привязать к серверу {s['name']}")
+                    c2 = self.session(tr('привязать к серверу {p0}', p0=s['name']))
                     if c2:
-                        try: self.add_server(c2, s, identity=key)
+                        try: self.bind_recovery_phone(c2, s, key)
                         except (OSError, ConnectionError, ValueError, KeyError) as e: print(red(f"✗ {e}"))
                         finally: c2.close()
                         pause()
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def bind_recovery_phone(self, ch, s, key):
+        """Сначала проверить новый телефон, затем снять явно выбранный старый ключ."""
+        new_blob = ch.call({"t": "list"})["line"].split()[1]
+        opts = ["-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-i", key]
+        result = subprocess.run(ssh_cmd(s, *opts) + ["cat ~/.ssh/authorized_keys"], capture_output=True, text=True)
+        if result.returncode:
+            print(red(tr("✗ Не удалось прочитать ключи резервным ключом — ничего не изменено"))); return False
+        old = []
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if (not line.lstrip().startswith("#") and len(fields) >= 3
+                    and (fields[-1] == PHONE_TAG or fields[-1].startswith(PHONE_TAG + ":"))):
+                match = re.search(r"(?:^|\s)ecdsa-sha2-nistp256 ([A-Za-z0-9+/=]+)(?:\s|$)", line)
+                if match and match[1] != new_blob and match[1] not in [b for b, _ in old]:
+                    old.append((match[1], fields[-1]))
+        print(yellow(tr("Выберите ключ потерянного телефона для отзыва. Ключи других людей не выбирайте.")))
+        pick = menu([tr('Отозвать: {p0} ({p1}…)', p0=tag, p1=blob[:16]) for blob, tag in old]
+                    + [tr("Только добавить новый телефон (старые ключи останутся)"), tr("Отмена")], default=len(old) + 2)
+        if not pick.isdigit() or not 1 <= int(pick) <= len(old) + 1: return False
+        drop = [old[int(pick) - 1][0]] if int(pick) <= len(old) else []
+        if not self.add_server(ch, s, opts=opts): return False
+        rc, _ = self.phone_ssh(ch, s, "true")
+        if rc != 0:
+            print(red(tr("✗ Новый вход не прошёл проверку — старые ключи НЕ сняты"))); return False
+        if drop:
+            rc, out = self.phone_ssh(ch, s, "sh -c " + shlex.quote(keys_cmd(drop=drop)))
+            ok = rc == 0 and "SSH-STORAGE-OK" in (out or "")
+            print(green(tr("✓ Новый телефон проверен, выбранный старый ключ отозван")) if ok else red(tr("✗ Старый ключ НЕ отозван — повторите восстановление")))
+            return ok
+        print(yellow(tr("⚠ Новый телефон проверен, но старые ключи остались действующими")))
+        return True
+
     # --- перенос из старого хранилища (vault.json) ---
     def migrate(self):
-        header("перенос старых подключений")
+        header(tr("перенос старых подключений"))
         with open(LEGACY_VAULT) as f: v = json.load(f)
-        pw = getpass.getpass(blue("Пароль администратора старого хранилища: "))
-        print(dim("Проверяю…"))
+        pw = getpass.getpass(blue(tr("Пароль администратора старого хранилища: ")))
+        print(dim(tr("Проверяю…")))
         try:
             k = hashlib.scrypt(pw.encode(), salt=bytes.fromhex(v["salt"]), n=2**17, r=8, p=1, maxmem=2**28, dklen=64)
             M = open_sym(k, bytes.fromhex(v["admin"]))
@@ -2632,22 +3368,22 @@ class PC:
                 b = bytes.fromhex(b); epub, rest = b[:32], b[32:]
                 conns.append(json.loads(open_sym(H(x25519(M, epub), epub, pubkey(M)), rest, epub)))
         except ValueError:
-            print(red("✗ Неверный пароль")); pause(); return
-        ch = self.session("перенос старых подключений")
+            print(red(tr("✗ Неверный пароль"))); pause(); return
+        ch = self.session(tr("перенос старых подключений"))
         if not ch: return
         tmp = tempfile.mkdtemp(prefix="sshstore-", dir=RAM)
         try:
             for cn in conns:
                 s = {k2: cn[k2] for k2 in ("name", "host", "port", "user")}
                 print("\n" + server_line(s))
-                if not server_ok(s): print(red("  пропущен: недопустимый адрес")); continue
+                if not server_ok(s): print(red(tr("  пропущен: недопустимый адрес"))); continue
                 key = None
                 if cn.get("private_key"):
                     key = os.path.join(tmp, "old")
                     fd = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                     with os.fdopen(fd, "w") as f: f.write(cn["private_key"])
                 self.add_server(ch, s, identity=key)
-            print(yellow(f"\nКогда всё проверите, старое хранилище можно удалить: {LEGACY_VAULT}"))
+            print(yellow(tr('\nКогда всё проверите, старое хранилище можно удалить: {p0}', p0=LEGACY_VAULT)))
         except (OSError, ConnectionError, ValueError, KeyError) as e:
             print(red(f"✗ {e}"))
         finally:
@@ -2655,34 +3391,35 @@ class PC:
         pause()
 
 def pc_wipe():
-    header("стереть данные")
-    print("Удалится " + bold(PC_STATE) + ": сопряжение и список серверов.")
-    print(dim("Секретов там нет; ключ остаётся на телефоне, резервный пароль — у вас на бумаге."))
-    print(yellow("Резервный пароль после этого здесь не будет известен: при новом сопряжении создастся новый."))
+    header(tr("стереть данные"))
+    print(tr("Удалится ") + bold(PC_STATE) + tr(": сопряжение и список серверов."))
+    print(dim(tr("Удалится закрытый ключ сопряжения; SSH-ключ остаётся на телефоне, резервный пароль — на бумаге.")))
+    print(yellow(tr("Резервный пароль после этого здесь не будет известен: при новом сопряжении создастся новый.")))
     if not confirm_wipe(): return False
     if os.path.exists(PC_STATE): os.remove(PC_STATE)
-    if os.path.exists(LEGACY_VAULT) and yes(yellow("Удалить и старый vault.json?")): os.remove(LEGACY_VAULT)
-    print(green("✓ Стёрто.")); return True
+    if os.path.exists(LEGACY_VAULT) and yes(yellow(tr("Удалить и старый vault.json?"))): os.remove(LEGACY_VAULT)
+    print(green(tr("✓ Стёрто."))); return True
 
 def pc_main():
-    if not shutil.which(SSH): print(red("ssh не найден")); sys.exit(1)
+    if not shutil.which(SSH): print(red(tr("ssh не найден"))); sys.exit(1)
     cleanup_stale()
     pc = PC()
     while True:
-        header("главное меню")
-        phone = green("📱 " + pc.d["phone"]["fp"]) if pc.d["phone"] else yellow("📱 не сопряжён")
-        rec = green("🔑 резерв есть") if pc.d["recovery"] else yellow("🔑 резерва нет")
+        header(tr("главное меню"))
+        phone = green(tr("Телефон: ") + pc.d["phone"]["fp"]) if pc.d["phone"] else yellow(tr("Телефон не сопряжён"))
+        rec = green(tr("Резервный ключ есть")) if pc.d["recovery"] else yellow(tr("Резервного ключа нет"))
         print(f"  {phone}   {rec}\n")
-        ch = menu(["Подключиться к серверу", "Серверы", "Сопряжение", "Действия на сервере",
-                   "Специальные возможности", "Выход"], default=1 if pc.d["phone"] else 3)
+        ch = menu([tr("Подключиться к серверу"), tr("Серверы"), tr("Сопряжение"), tr("Действия на сервере"),
+                   tr("Специальные возможности"), tr("Language / Язык"), tr("Выход")], default=1 if pc.d["phone"] else 3)
         if ch == "1": pc.connect()
         elif ch == "2": pc.section_servers()
         elif ch == "3": pc.section_pairing()
         elif ch == "4": pc.section_actions()
         elif ch == "5":
             if pc.section_special() == "wiped": return
-        elif ch == "6": clear(); return
+        elif ch == "6": language_settings(pc.d, pc.save)
+        elif ch == "7": clear(); return
 
 if __name__ == "__main__":
     try: phone_main() if IS_PHONE else pc_main()
-    except (KeyboardInterrupt, EOFError): print("\n" + dim("пока!"))
+    except (KeyboardInterrupt, EOFError): print("\n" + dim(tr("пока!")))

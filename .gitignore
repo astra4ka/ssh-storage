@@ -1,2 +1,14 @@
 __pycache__/
 .claude/
+*.py[cod]
+pc.json*
+phone.json*
+vault.json*
+.pc.json.*
+.phone.json.*
+.vault.json.*
+.env
+.env.*
+!.env.example
+*.pem
+*.key
