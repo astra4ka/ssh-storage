@@ -1,13 +1,15 @@
 # SSH Storage
 
-The SSH key lives only on your phone, in the Android Keystore secure chip. The computer never gets the key. When you log in to a server, the computer asks the phone to sign the login, and you confirm it on the phone.
+The SSH key lives in Android Keystore on your phone; hardware backing depends on the device. The computer never gets that key. When you log in to a server, the computer asks the phone to sign the login, and you confirm it on the phone.
+
+**Experimental software without an independent audit.** Real Android Keystore, recovery, and VPS configuration changes still need testing on real test equipment. Do not use this as your only way into important servers. See [SECURITY.md](SECURITY.md).
 
 Русская версия: [README.ru.md](README.ru.md).
 
 | Where | What is there | How it is installed |
 |---|---|---|
-| Computer | the program and `pc.json` settings in `~/.local/share/ssh-storage/`. `pc.json` holds no secrets | one command or `install.sh`, on NixOS a `.nix` module |
-| Phone (Termux) | the program and the server list in `~/.ssh-storage/`, the SSH key in Android Keystore (it cannot be extracted) | one command in Termux |
+| Computer | the program and `pc.json` in `~/.local/share/ssh-storage/`. The file contains a private pairing key: never publish it | one command or `install.sh`, on NixOS a `.nix` module |
+| Phone (Termux) | the program, private pairing key and server list in `~/.ssh-storage/`, the SSH key in Android Keystore | one command in Termux |
 | Server | the phone key and the recovery key in `~/.ssh/authorized_keys` | the computer adds them for you |
 | A sheet of paper | the 20-character recovery password | you write it down during pairing |
 
@@ -15,7 +17,7 @@ Open the program with `ssh-storage` on the computer and on the phone. The normal
 
 First setup order: computer, then phone, pairing, servers.
 
-The program interface is in Russian. Menu names below are given in English with the Russian text in quotes where it helps.
+The interface is in English by default. Open `Language / Язык` in the main menu on the computer and on the phone to switch to Russian. Each device saves its own choice in `pc.json` or `phone.json`, so the language is kept after restarts, pairing and updates. The program restarts itself when you switch, so some server-side messages change only after that restart. Erasing all data also removes the saved language. Source comments and the Russian manual are not translated.
 
 ---
 
@@ -24,15 +26,15 @@ The program interface is in Russian. Menu names below are given in English with 
 ### One-line install (Linux and macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/ssh-storage/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/astra4ka/ssh-storage/main/install.sh | sh
 ```
 
-Replace `OWNER` with the GitHub account that hosts the project. The script downloads `sshstore.py`, checks that the file is valid Python, and installs the program. If `OWNER` is still in the script, it stops and changes nothing.
+The script downloads `sshstore.py`, checks its Python syntax, and installs it. This is not an authenticity check: the command runs code from the current GitHub branch. To review before running, download the repository and inspect its files first.
 
 ### Install from the project folder
 
 ```bash
-git clone https://github.com/OWNER/ssh-storage && cd ssh-storage && sh install.sh
+git clone https://github.com/astra4ka/ssh-storage && cd ssh-storage && sh install.sh
 ```
 
 Supported: Arch and derivatives (CachyOS, Manjaro, EndeavourOS), Debian, Ubuntu, Mint, Fedora, openSUSE, Alpine, Void and macOS.
@@ -60,8 +62,9 @@ The script asks for your config folder, copies `ssh-storage.nix` there and runs 
 2 Servers                 list, add, new VPS, bulk actions, key reissue, team members
 3 Pairing                 with the phone, install or update the phone app
 4 Server actions          history, break-in attempts, diagnostics, process check, web panel tunnel
-5 Special                 recovery, vault.json import, erase data
-6 Exit
+5 Advanced options        recovery, vault.json import, approval log, erase data
+6 Language / Язык
+7 Exit
 ```
 
 On every login the program detects your rights on the server: root, passwordless sudo, sudo with password, log access, or a plain user. Items that need more rights are marked. The server always checks the real rights.
@@ -78,10 +81,10 @@ You need Termux and Termux:API, both from F-Droid. The phone and the computer mu
    ```bash
    pkg install -y python termux-api openssh && python -c "import socket,hashlib,os;c=socket.create_server(('',47232)).accept()[0];c.send(b'R');d=c.makefile('rb').read();print(hashlib.sha256(d).hexdigest()[:16]);input('OK? Enter');p=os.path.expanduser('~/.ssh-storage');os.makedirs(p,0o700,1);f=p+'/sshstore.py';open(f+'.n','wb').write(d);os.replace(f+'.n',f);os.execvp('python',['python',f,'--install'])"
    ```
-2. On the computer: `ssh-storage`, Pairing ("Сопряжение"), "Install / update the phone app", pick the phone.
+2. On the computer: `ssh-storage`, Pairing, "Install / update the phone app", pick the phone.
 3. Both screens show a 16-digit code. If the codes match, press Enter on the phone. If they differ, press nothing and close Termux: the file was tampered with.
 
-On first start the phone creates the key in Keystore. The main screen then says the SSH key is in the secure chip.
+On first start the phone creates the key in Keystore. The main screen shows whether Android reports hardware backing. A separate secure chip is not available on every device.
 
 The `openssh` package lets you log in to servers directly from the phone. Everything else works without it.
 
@@ -105,7 +108,8 @@ One recovery password covers all your servers. Adding a server does not create a
 
 - "Wait for computer requests": the phone waits for the computer to ask for a signature or a list change.
 - "Servers": the server list. Each server has Connect, Edit, Install command, Delete and Web panel tunnel. Below the list are "+ Add manually" and, if you are the team admin, "Revoke member".
-- "Special": approval log, your public key for a team admin, erase data.
+- "Advanced options": approval log, your public key for a team admin, erase data.
+- "Language / Язык": switch between English and Russian.
 
 ---
 
@@ -138,7 +142,7 @@ If the new login is not confirmed within 3 minutes after step 5, the server rest
 
 ### Connect to a server
 
-From the computer: phone in "Wait for computer requests", run `ssh-storage` on the computer and press Enter, compare the session code, press `y` on the phone, pick the server.
+From the computer: phone in "Wait for computer requests", run `ssh-storage` on the computer and press Enter, compare the session code, press `y` on the phone, pick the server and approve that server separately on the phone. Administrative actions opening another connection require another approval.
 
 From the phone: Servers, pick the server, Connect. No computer needed.
 
@@ -169,7 +173,7 @@ An administrator gets a temporary sudo password when created. The server asks th
 ### Add a member
 
 1. The member installs the same program on their computer and phone and pairs them. When asked "Is this a team member's computer?", they answer "yes". They get no recovery password.
-2. The member sends you their phone's public key. On the phone it is in Special, "My public key". The line starts with `ecdsa-sha2-nistp256`. It is not secret and can be sent in a messenger.
+2. The member sends you their phone's public key. On the phone it is in Advanced options, "My public key". The line starts with `ecdsa-sha2-nistp256`. It is not secret and can be sent in a messenger.
 3. You: Servers, "Team members", "Add member to servers". Enter login, nick, key and role, then pick the servers.
 
 The member list is stored on your phone, with a copy on the computer. They sync after every add and delete.
@@ -201,9 +205,9 @@ A member with the administrator role has sudo and can technically do anything on
 ## 5. Lost phone
 
 Your phone:
-1. On any computer with the program: Special, "Recovery with the recovery password", enter the password from paper.
+1. On any computer with the program: Advanced options, "Recover with backup password", enter the password from paper.
 2. Pick a server, "Connect with the recovery key".
-3. New phone: install and pair. Then in Recovery choose "Bind the paired phone" for each server. The old phone key is replaced.
+3. New phone: install and pair. Then in Recovery choose "Bind the paired phone" for each server and explicitly select the lost phone's key to revoke. The program adds the new key, verifies a login with it, then removes the selected old key. If verification fails, the old key stays; retry recovery. Choosing "Only add" does not revoke old keys.
 
 A member's phone: revoke the member and add them again with the new phone key.
 
@@ -215,9 +219,9 @@ If both the phone and the paper are lost, the only way in is the console in your
 
 | Situation | Result |
 |---|---|
-| Malware on the computer | There is no key on the computer. Logging in as you needs confirmation on the phone with a matching code |
-| A file stolen from the computer | `pc.json` holds no secrets |
-| Malware on the phone, even with root | The key cannot be extracted from the chip. Malware can use it only while running on the phone |
+| Malware on the computer | The phone's SSH key is not copied, but malware can abuse an approved login, steal the session or offer a malicious update |
+| Stolen `pc.json` | The private pairing key has leaked; remove pairing on the phone and pair again |
+| Malware on the phone, especially with root | May bypass approvals and use the key. Hardware backing does not make an infected phone safe |
 | Stolen phone | Log in with the recovery password and bind a new phone |
 | Interception during pairing | The 6-digit code reveals it |
 | Someone else's request during your login | The session code on the phone will not match the computer |
@@ -227,7 +231,8 @@ If both the phone and the paper are lost, the only way in is the console in your
 There is no telemetry. The program connects only to the phone on the local network (port 47232), to your servers over SSH, and to `127.0.0.1` for the tunnel.
 
 What remains:
-- Malware on the computer during your session sees the terminal. It does not get the key.
+- Malware on the computer can read and alter your terminal and commands. Recovery also enters the recovery password on the computer, where malware could steal it.
+- The phone checks the SSH signing request format and username, not the server address: the address is absent from the signed data. The session code verifies the PC–phone channel, not the safety of the PC or server commands.
 - Press `y` on the phone only for your own requests and only when the code matches.
 - The recovery password opens all servers. If it may have leaked, use Servers, "Key reissue" with a new recovery key.
 - Command recording (auditd) saves every command of every user with arguments. A password typed inside a command ends up in the log. Tell your members.
@@ -256,17 +261,21 @@ What remains:
 | Problem | What to do |
 |---|---|
 | The computer cannot find the phone | The phone must be in "Wait for computer requests" and awake. Check that both are on the same network and VPN is off. Guest networks may isolate devices, then type the IP shown on the phone |
-| "Нет termux-keystore" (no termux-keystore) | Install Termux:API from F-Droid and run `pkg install termux-api` |
-| "Нет ssh: выполните pkg install openssh" | Run `pkg install openssh` in Termux |
-| "не нашёл SSH-сервер на этом порту" (no SSH server on this port) | Check the IP and port. The hoster firewall may block the port |
+| "termux-keystore is missing" | Install Termux:API from F-Droid and run `pkg install termux-api` |
+| "ssh is missing: run pkg install openssh" | Run `pkg install openssh` in Termux |
+| "no SSH server found on this port" | Check the IP and port. The hoster firewall may block the port |
 | Adding a server failed | Run the command the computer shows on the server, or take it from the phone: the server, Install command |
 | "New VPS" stopped at steps 1 to 3 | Password login still works. Fix the reason from the message and retry |
 | No login after "New VPS" | Wait 3 minutes. The server restores the old port and password login by itself |
 | Member: "user already exists and is not this member" | That login on the server is not your member. Choose another login |
-| Revoke: "не выполнено" (not done) | The server was unreachable or the sudo password was not entered. Retry for that server |
+| Revoke: "failed (unreachable or sudo denied) - try again" | The server was unreachable or the sudo password was not entered. Retry for that server |
 | `ssh-storage: command not found` on the computer | Open a new terminal. Fallback: `python3 ~/.local/share/ssh-storage/sshstore.py` |
 | `ssh-storage: command not found` on the phone | Reinstall the app (section 2). Fallback: `python ~/.ssh-storage/sshstore.py` |
 | Installer: "Set your GitHub name in REPO_RAW" | Replace `OWNER` in the URL with the account name, or run with `SSH_STORAGE_RAW=https://raw.githubusercontent.com/NAME/ssh-storage/main` |
 | Installer: "sshstore.py is damaged" | The download was incomplete. Run the install again |
 
-Limits: the real `termux-keystore` and team mode have not yet been tested on live devices and servers. The installer was tested on Linux, not live on macOS. The program interface is Russian only.
+Limits: the real `termux-keystore` and team mode have not yet been tested on live devices and servers. The installer was tested on Linux, not live on macOS. The interface is English by default with a Russian option; source code comments are in Russian.
+
+## Developer checks
+
+No third-party Python dependencies: `python3 -m unittest discover -s tests -v` and `sh -n install.sh`. Tests use temporary directories and phone stubs, not your servers. They do not replace real SSH login and Android Keystore tests.
