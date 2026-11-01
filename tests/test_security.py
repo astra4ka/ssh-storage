@@ -162,6 +162,17 @@ class KeyInstallationTests(unittest.TestCase):
 
 
 class StateFileTests(unittest.TestCase):
+    def test_startup_cleanup_preserves_state_inside_a_temporary_directory(self):
+        with tempfile.TemporaryDirectory(prefix="sshstore-cleanup-") as base:
+            state = Path(base) / "sshstore-state"
+            state.mkdir()
+            file = state / "pc.json"
+            file.write_text('{"servers": []}')
+            with patch.object(app, "RAM", None), patch.object(app, "HERE", str(state)), patch.object(app.tempfile, "gettempdir", return_value=base):
+                app.cleanup_stale()
+            self.assertTrue(file.exists())
+            self.assertEqual(file.read_text(), '{"servers": []}')
+
     def test_save_ignores_predictable_temp_symlink_and_uses_private_permissions(self):
         with tempfile.TemporaryDirectory(prefix="sshstore-test-") as directory:
             state = Path(directory) / "pc.json"

@@ -13,6 +13,10 @@
 - Synchronize the standalone application and the Python embedded in the NixOS/home-manager module.
 - The wizard remains experimental: automated tests are not a substitute for disposable VPS and real Android testing. Keep a provider console and a separate recovery path available.
 
+### Fixed
+- Keep the active application state directory out of startup temporary-directory cleanup, including when it is stored in the macOS temporary directory.
+- Use portable stream editing for the SSH port transaction, preserving existing file permissions without depending on GNU `sed -i` syntax.
+
 ## 2026.10.31
 
 ### Interface

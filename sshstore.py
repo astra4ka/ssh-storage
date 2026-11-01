@@ -1109,7 +1109,8 @@ def vps_ssh_cmd(token, phase, old_port, port, *, user="root", root=False, passwo
         # Port — накопительная директива: одного раннего drop-in недостаточно, нужен снимок всех затронутых файлов.
         write += ('for f in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do '
                   '[ "$f" = "$C" ] && continue; [ -f "$f" ] || continue; '
-                  'sed -i "/^[[:space:]]*[Pp][Oo][Rr][Tt][[:space:]]/s/^/# ssh-storage: /" "$f"; done; ')
+                  'sed "/^[[:space:]]*[Pp][Oo][Rr][Tt][[:space:]]/s/^/# ssh-storage: /" "$f" > "$B/port.new"; '
+                  'cat "$B/port.new" > "$f"; done; ')
     # Явный Include раньше любых значений в main; повторное чтение через wildcard не меняет первые значения.
     write += ('{ printf "%s\\n" "Include $C"; awk -v line="Include $C" \'$0 != line\' /etc/ssh/sshd_config; } > "$B/main.new"; '
               'cat "$B/main.new" > /etc/ssh/sshd_config; sshd -t; '
@@ -2444,6 +2445,8 @@ def cleanup_stale():
     for n in os.listdir(base):
         p = os.path.join(base, n)
         try:
+            # SSHSTORE_DIR может находиться в системном temp (например на macOS). Это состояние, не мусор сеанса.
+            if os.path.commonpath([os.path.realpath(p), os.path.realpath(HERE)]) == os.path.realpath(p): continue
             if n.startswith("sshstore-") and os.path.isdir(p) and os.stat(p).st_uid == os.getuid():
                 shutil.rmtree(p, ignore_errors=True)
         except OSError:
