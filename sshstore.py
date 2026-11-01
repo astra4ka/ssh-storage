@@ -30,7 +30,7 @@ LEGACY_VAULT = os.path.join(HERE, "vault.json")
 PHONE = os.path.join(HERE, "phone.json")
 TCP_PORT = 47232
 # Версия программы: ГГГГ.ММ.ДД[.N]. Поднимать при каждом выпуске — телефон не ставит версию старее своей.
-VERSION = "2026.10.31"
+VERSION = "2026.11.01"
 # Автообновление телефона с ПК (сообщения version / update_part / update_done). Эти имена и поля НЕ менять и не удалять:
 # по ним обновляются телефоны со старыми версиями. Новое — только новыми полями/типами (неизвестное обе стороны игнорируют).
 UPD_CHUNK, UPD_MAX = 256 * 1024, 8 << 20
@@ -73,6 +73,46 @@ def tr(message, **values):
 
 # BEGIN GENERATED TRANSLATIONS
 EN_MESSAGES = {
+    "Ключом телефона": "Phone key",
+    "Другим способом (пароль или SSH-ключ)": "Another method (password or SSH key)",
+    "Настроить VPS": "Set up VPS",
+    "Подключить существующий сервер": "Connect an existing server",
+    "Настроить новый VPS": "Set up a new VPS",
+    "Выполнить": "Run",
+    "Пропустить": "Skip",
+    "Отмена настройки": "Cancel setup",
+    "Обновить список пакетов": "Refresh package lists",
+    "apt update: только список доступных пакетов, без установки обновлений.": "apt update: refresh available package lists without installing updates.",
+    "Создать нового пользователя": "Create a new user",
+    "Отдельный логин для входа вместо root. При пропуске остаётся текущий пользователь.": "A separate login instead of root. Skip to keep using the current user.",
+    "Логин нового пользователя": "New user's login",
+    "Выдать права администратора": "Grant administrator privileges",
+    "Добавить пользователя в sudo: административные команды с паролем. Пароль программа не сохраняет.": "Add the user to sudo: administrative commands with a password. The program does not save the password.",
+    "Настроить цвета терминала": "Set up terminal colors",
+    "Добавить export TERM=xterm-256color в ~/.profile выбранного пользователя для следующих входов.": "Add export TERM=xterm-256color to the target user's ~/.profile for subsequent logins.",
+    "Настроить вход ключами приложения": "Set up application key login",
+    "Добавить публичный ключ телефона и резервный ключ. Чужие ключи сохраняются; приватный ключ на VPS не создаётся.": "Add the phone public key and recovery key. Preserve other keys; no private key is generated on the VPS.",
+    "Изменить порт SSH": "Change the SSH port",
+    "Новый порт уменьшает шум от ботов, но не заменяет защиту ключами. Откройте его также в firewall хостера.": "A new port reduces bot noise but does not replace key security. Also open it in your provider's firewall.",
+    "Запретить вход root по SSH": "Disable root SSH login",
+    "Прямой SSH-вход под root перестанет работать. Права sudo у обычного пользователя сохраняются.": "Direct SSH login as root will stop working. A regular user's sudo privileges remain.",
+    "Отключить вход по паролю SSH": "Disable SSH password login",
+    "Вход только ключами, включая отключение интерактивного пароля. Пароль для sudo остаётся.": "Key-only login, also disabling keyboard-interactive passwords. The sudo password remains.",
+    "Нельзя запретить root-вход, оставив root целевым пользователем. Запустите мастер заново и измените выбор.": "Cannot disable root login while root is the target user. Restart setup and change your selection.",
+    "Для нового пользователя без ключей нельзя проверить вход перед изменением SSH. Выберите установку ключей или пропустите изменения SSH.": "Cannot verify a new user without keys before changing SSH. Select key installation or skip SSH changes.",
+    "Удаляется только запись на ПК и телефоне. Пользователь, файлы и ключи на VPS остаются.": "Only remove the entry on the computer and phone. The user, files and keys on the VPS remain.",
+    "Удалить старое подключение из списка?": "Remove the old connection from the list?",
+    "Старое подключение оставлено в списке.": "The old connection was kept in the list.",
+    "Настройка VPS доступна владельцу резервного доступа. Сначала выполните сопряжение.": "VPS setup is available to the recovery key owner. Pair your phone first.",
+    "Все действия пропущены. Сервер не изменён.": "All actions skipped. The server was not changed.",
+    "\nЦелевое подключение: {p0}": "\nTarget connection: {p0}",
+    "  Порт SSH: {p0} → {p1}": "  SSH port: {p0} → {p1}",
+    "Нужны Ubuntu/Debian и root или sudo у исходного пользователя. Сохраните доступ к консоли хостера.": "Requires Ubuntu/Debian and root or sudo for the original user. Keep access to your provider's console.",
+    "Выполнить выбранные действия?": "Run the selected actions?",
+    "Настройка не завершена. Изменения могли выполниться частично; старое подключение не удалено. Если SSH уже менялся, дождитесь отката через 3 минуты.": "Setup is incomplete. Some changes may have been applied; the old connection was not deleted. If SSH was changed, allow 3 minutes for rollback.",
+    "Целевое подключение уже есть. Использовать его запись?": "The target connection already exists. Use its entry?",
+    "SSH: включён независимый откат через 3 минуты до подтверждения нового входа.": "SSH: independent rollback in 3 minutes unless the new login is verified.",
+    "Готово: выбранные действия выполнены, новый вход ключом телефона проверен.": "Done: selected actions applied and a fresh phone-key login verified.",
     "o() { echo \"$1|$2|$3\"; }\ndf -P -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 { u = $5 + 0; s = (u >= 95 ? \"crit\" : u >= 85 ? \"warn\" : \"ok\"); print s \"|диск \" $6 \"|занято \" u \"%\" }'\ndf -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 && $5 != \"-\" { u = $5 + 0; if (u >= 85) print (u >= 95 ? \"crit\" : \"warn\") \"|inode \" $6 \"|занято \" u \"% inode\" }'\n# только чтение — если у устройства нет ни одного rw-монтирования (bind-ro вроде /nix/store — норма)\nawk '$3 ~ /^(ext[234]|xfs|btrfs|f2fs)$/ { if ($4 ~ /^rw/) rw[$1] = 1; else if ($4 ~ /^ro(,|$)/) ro[$1] = $2 }\n  END { for (d in ro) if (!(d in rw)) print \"crit|ФС \" ro[d] \"|смонтирована только на чтение (часто — ошибки диска)\" }' /proc/mounts\nawk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } /^SwapTotal/ { st = $2 } /^SwapFree/ { sf = $2 }\n  END { p = 100 - a * 100 / t; printf \"%s|память|занято %d%%\\n\", (p >= 95 ? \"crit\" : p >= 85 ? \"warn\" : \"ok\"), p\n        if (st > 0) { q = 100 - sf * 100 / st; printf \"%s|swap|занято %d%%\\n\", (q >= 80 ? \"warn\" : \"ok\"), q } }' /proc/meminfo\nn=$(nproc 2>/dev/null || echo 1); read l1 l5 rest < /proc/loadavg\nawk -v l=\"$l5\" -v n=\"$n\" 'BEGIN { printf \"%s|нагрузка|%s за 5 мин на %d ядер\\n\", (l >= 2 * n ? \"crit\" : l >= n ? \"warn\" : \"ok\"), l, n }'\nif command -v timedatectl >/dev/null 2>&1; then\n  [ \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes ] && o ok время \"синхронизировано (NTP)\" || o warn время \"не синхронизировано с NTP — расходятся журналы, TLS, 2FA\"\nfi\nif [ \"$FULL\" = 1 ]; then\n  S=\"\"; [ \"$(id -u)\" = 0 ] || { sudo -n true 2>/dev/null && S=\"sudo -n\"; }\n  oom=$($S journalctl -k --since -7d -q --no-pager 2>/dev/null | grep -ci \"out of memory\")\n  [ \"${oom:-0}\" -gt 0 ] && o crit OOM \"процессы убиты из-за нехватки памяти за 7 дней: $oom\" || o ok OOM \"за 7 дней не было\"\n  t=$($S journalctl -p err --since today -q --no-pager 2>/dev/null | wc -l)\n  w=$($S journalctl -p err --since -7d --until today -q --no-pager 2>/dev/null | wc -l); avg=$((w / 6))\n  [ \"$t\" -gt $((avg * 2 + 10)) ] && o warn \"рост ошибок\" \"сегодня $t, обычно ~$avg в день\" || o ok \"ошибки журнала\" \"сегодня $t, обычно ~$avg в день\"\n  if command -v openssl >/dev/null 2>&1; then\n    for c in $($S sh -c 'ls /etc/letsencrypt/live/*/cert.pem' 2>/dev/null); do\n      e=$($S openssl x509 -enddate -noout -in \"$c\" 2>/dev/null | cut -d= -f2); [ -n \"$e\" ] || continue\n      x=$(date -d \"$e\" +%s 2>/dev/null); [ -n \"$x\" ] || continue; d=$(( (x - $(date +%s)) / 86400 ))\n      o \"$([ $d -lt 3 ] && echo crit || { [ $d -lt 14 ] && echo warn || echo ok; })\" \"SSL $(basename \"$(dirname \"$c\")\")\" \"истекает через $d дн.\"\n    done\n  fi\n  u=\"\"\n  if command -v apt >/dev/null 2>&1; then u=$(apt list --upgradable 2>/dev/null | grep -ci -- \"-security\")\n  elif command -v dnf >/dev/null 2>&1; then u=$(dnf -q updateinfo list --security 2>/dev/null | wc -l)\n  elif command -v checkupdates >/dev/null 2>&1; then u=$(checkupdates 2>/dev/null | wc -l); fi\n  [ -n \"$u\" ] && { [ \"$u\" -gt 0 ] && o warn \"обновления безопасности\" \"доступно: $u\" || o ok \"обновления безопасности\" \"нет\"; }\nfi\necho \"==END==\"": "o() { echo \"$1|$2|$3\"; }\ndf -P -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 { u = $5 + 0; s = (u >= 95 ? \"crit\" : u >= 85 ? \"warn\" : \"ok\"); print s \"|disk \" $6 \"|used \" u \"%\" }'\ndf -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | awk 'NR>1 && $5 != \"-\" { u = $5 + 0; if (u >= 85) print (u >= 95 ? \"crit\" : \"warn\") \"|inode \" $6 \"|used \" u \"% inode\" }'\n# read-only: only when the device has no rw mount (a bind-ro mount such as /nix/store is normal)\nawk '$3 ~ /^(ext[234]|xfs|btrfs|f2fs)$/ { if ($4 ~ /^rw/) rw[$1] = 1; else if ($4 ~ /^ro(,|$)/) ro[$1] = $2 }\n  END { for (d in ro) if (!(d in rw)) print \"crit|FS \" ro[d] \"|mounted read-only (often a disk error)\" }' /proc/mounts\nawk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } /^SwapTotal/ { st = $2 } /^SwapFree/ { sf = $2 }\n  END { p = 100 - a * 100 / t; printf \"%s|memory|used %d%%\\n\", (p >= 95 ? \"crit\" : p >= 85 ? \"warn\" : \"ok\"), p\n        if (st > 0) { q = 100 - sf * 100 / st; printf \"%s|swap|used %d%%\\n\", (q >= 80 ? \"warn\" : \"ok\"), q } }' /proc/meminfo\nn=$(nproc 2>/dev/null || echo 1); read l1 l5 rest < /proc/loadavg\nawk -v l=\"$l5\" -v n=\"$n\" 'BEGIN { printf \"%s|load|%s in 5 min on %d cores\\n\", (l >= 2 * n ? \"crit\" : l >= n ? \"warn\" : \"ok\"), l, n }'\nif command -v timedatectl >/dev/null 2>&1; then\n  [ \"$(timedatectl show -p NTPSynchronized --value 2>/dev/null)\" = yes ] && o ok time \"synchronized (NTP)\" || o warn time \"not synchronized with NTP: logs, TLS and 2FA will drift\"\nfi\nif [ \"$FULL\" = 1 ]; then\n  S=\"\"; [ \"$(id -u)\" = 0 ] || { sudo -n true 2>/dev/null && S=\"sudo -n\"; }\n  oom=$($S journalctl -k --since -7d -q --no-pager 2>/dev/null | grep -ci \"out of memory\")\n  [ \"${oom:-0}\" -gt 0 ] && o crit OOM \"processes killed for lack of memory in 7 days: $oom\" || o ok OOM \"none in 7 days\"\n  t=$($S journalctl -p err --since today -q --no-pager 2>/dev/null | wc -l)\n  w=$($S journalctl -p err --since -7d --until today -q --no-pager 2>/dev/null | wc -l); avg=$((w / 6))\n  [ \"$t\" -gt $((avg * 2 + 10)) ] && o warn \"error growth\" \"today $t, usually ~$avg per day\" || o ok \"journal errors\" \"today $t, usually ~$avg per day\"\n  if command -v openssl >/dev/null 2>&1; then\n    for c in $($S sh -c 'ls /etc/letsencrypt/live/*/cert.pem' 2>/dev/null); do\n      e=$($S openssl x509 -enddate -noout -in \"$c\" 2>/dev/null | cut -d= -f2); [ -n \"$e\" ] || continue\n      x=$(date -d \"$e\" +%s 2>/dev/null); [ -n \"$x\" ] || continue; d=$(( (x - $(date +%s)) / 86400 ))\n      o \"$([ $d -lt 3 ] && echo crit || { [ $d -lt 14 ] && echo warn || echo ok; })\" \"SSL $(basename \"$(dirname \"$c\")\")\" \"expires in $d days\"\n    done\n  fi\n  u=\"\"\n  if command -v apt >/dev/null 2>&1; then u=$(apt list --upgradable 2>/dev/null | grep -ci -- \"-security\")\n  elif command -v dnf >/dev/null 2>&1; then u=$(dnf -q updateinfo list --security 2>/dev/null | wc -l)\n  elif command -v checkupdates >/dev/null 2>&1; then u=$(checkupdates 2>/dev/null | wc -l); fi\n  [ -n \"$u\" ] && { [ \"$u\" -gt 0 ] && o warn \"security updates\" \"available: $u\" || o ok \"security updates\" \"none\"; }\nfi\necho \"==END==\"",
     "S=\"\"; [ \"$(id -u)\" = 0 ] || S=sudo; command -v auditctl >/dev/null 2>&1 || { echo \"auditd не установлен. Установите: apt install auditd | dnf install audit | pacman -S audit\"; exit 3; }; ": "S=\"\"; [ \"$(id -u)\" = 0 ] || S=sudo; command -v auditctl >/dev/null 2>&1 || { echo \"auditd is not installed. Install: apt install auditd | dnf install audit | pacman -S audit\"; exit 3; }; ",
     "Enter — продолжить": "Enter — continue",
@@ -962,25 +1002,134 @@ TERM_CMD = "grep -qs 'TERM=xterm-256color' ~/.profile || echo 'export TERM=xterm
 
 # Новый VPS: свой drop-in sshd (00- — читается первым, первое значение побеждает, в т.ч. над 50-cloud-init.conf).
 VPS_CONF = "/etc/ssh/sshd_config.d/00-ssh-storage.conf"
-SSHD_RESTART = ("if systemctl is-active -q ssh.socket 2>/dev/null; then systemctl daemon-reload && systemctl restart ssh.socket; "
-                "else systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || service ssh restart; fi")
+SSHD_RESTART = ("(if systemctl is-active -q ssh.socket 2>/dev/null; then systemctl daemon-reload && systemctl restart ssh.socket && systemctl restart ssh; "
+                "else systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || service ssh restart; fi) || exit 1")
 
-def vps_step1(user, old_port, port, install):
-    """Шаг 1 (вход паролем, root или sudo): пользователь, ключи телефона, оба порта. Пароль и root пока работают."""
-    assert re.fullmatch(LOGIN_RE, user) and port_ok(str(port)) and port_ok(str(old_port))
-    root = (tr('set -e; command -v apt-get >/dev/null || {{ echo "Нужна Ubuntu / Debian (apt)"; exit 5; }}; grep -qsi "^Include /etc/ssh/sshd_config.d/" /etc/ssh/sshd_config || {{ echo "В sshd_config нет Include sshd_config.d"; exit 6; }}; apt-get update -qq || true; if ! id {p0} >/dev/null 2>&1; then adduser --disabled-password --gecos "" {p1}; echo "Придумайте пароль для sudo пользователя {p2}:"; passwd {p3}; fi; usermod -aG sudo {p4}; su - {p5} -s /bin/sh -c {p6}; for c in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do if [ -f "$c" ] && [ "$c" != {p7} ] && grep -qi "^[[:space:]]*port[[:space:]]" "$c"; then sed -i.ssh-storage.bak "s/^[[:space:]]*[Pp]ort[[:space:]]/#&/" "$c"; fi; done; printf "Port {p8}\nPort {p9}\n" > {p10}; sshd -t || {{ rm -f {p11}; for c in /etc/ssh/sshd_config.ssh-storage.bak /etc/ssh/sshd_config.d/*.ssh-storage.bak; do if [ -f "$c" ]; then mv "$c" "${{c%.ssh-storage.bak}}"; fi; done; exit 7; }}; if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow {p12}/tcp; fi; {p13}', p0=user, p1=user, p2=user, p3=user, p4=user, p5=user, p6=shlex.quote(TERM_CMD + "; " + install), p7=VPS_CONF, p8=old_port, p9=port, p10=VPS_CONF, p11=VPS_CONF, p12=port, p13=SSHD_RESTART))
-    return f'S=""; [ "$(id -u)" = 0 ] || S=sudo; $S sh -c {shlex.quote(root)}'
+def vps_root(command):
+    return 'S=""; [ "$(id -u)" = 0 ] || S=sudo; $S env SSH_CONNECTION="${SSH_CONNECTION-}" sh -c ' + shlex.quote(
+        'set -eu; PATH=/usr/sbin:/usr/bin:/sbin:/bin:$PATH; export PATH; ' + command)
 
-def vps_step2(port):
-    """Шаг 2 (уже ключом телефона на новом порту): только новый порт, без root и паролей.
-    Если через 3 мин нет метки ~/.ssh-storage-ok (её ставит следующий вход ключом) — откат к шагу 1."""
-    assert port_ok(str(port))
-    back = f"sleep 180; [ -f \"$H/.ssh-storage-ok\" ] || {{ mv {VPS_CONF}.bak {VPS_CONF}; {SSHD_RESTART}; }}"
-    root = (f'set -e; cp {VPS_CONF} {VPS_CONF}.bak; printf "Port {port}\nPermitRootLogin no\nPubkeyAuthentication yes\n'
-            f'PasswordAuthentication no\nKbdInteractiveAuthentication no\n" > {VPS_CONF}; '
-            f'sshd -t || {{ mv {VPS_CONF}.bak {VPS_CONF}; exit 7; }}; '
-            f'H="$H" setsid nohup sh -c {shlex.quote(back)} >/dev/null 2>&1 </dev/null & sleep 1; {SSHD_RESTART}')
-    return f'H=$HOME; rm -f ~/.ssh-storage-ok; S=""; [ "$(id -u)" = 0 ] || S=sudo; $S env H="$H" sh -c {shlex.quote(root)}'
+
+def vps_prepare_cmd(user, *, create=False, admin=False, term=False, update=False, install=""):
+    """Подготовка через исходную учётку: пропущенные действия не попадают в команду."""
+    if not re.fullmatch(LOGIN_RE, user) or create and user == "root":
+        raise ValueError("Invalid target login")
+    admin = admin and user != "root"  # root уже администратор; не меняем его пароль ради sudo.
+    steps = ['command -v apt-get >/dev/null || { echo "Ubuntu / Debian required"; exit 5; }']
+    if create:
+        steps.append(f'if id {user} >/dev/null 2>&1; then echo "Login already exists: {user}"; exit 4; fi')
+    else:
+        steps.append(f'id {user} >/dev/null')
+    if admin: steps.append('command -v sudo >/dev/null; getent group sudo >/dev/null')
+    if update: steps.append('apt-get update')
+    if create: steps.append(f'adduser --disabled-password --gecos "" {user}')
+    if admin:
+        steps += [f'passwd -S {user} | grep -q " P " || passwd {user}', f'usermod -aG sudo {user}',
+                  f'sudo -l -U {user}']
+    personal = ([TERM_CMD] if term else []) + ([install] if install else [])
+    if personal:
+        steps.append(f'su - {user} -s /bin/sh -c ' + shlex.quote("set -e; " + "; ".join(personal)))
+    steps.append('echo SSH-STORAGE-PREPARED')
+    return vps_root("; ".join(steps))
+
+
+def vps_settings(old_port, port, *, stage=False, root=False, passwords=False, keys=False):
+    if not port_ok(str(old_port)) or not port_ok(str(port)):
+        raise ValueError("Invalid SSH port")
+    lines = []
+    if old_port != port:
+        if stage: lines.append(f"Port {old_port}")
+        lines.append(f"Port {port}")
+    if root: lines.append("PermitRootLogin no")
+    if passwords: lines += ["PasswordAuthentication no", "KbdInteractiveAuthentication no"]
+    if keys: lines.append("PubkeyAuthentication yes")
+    return "".join(line + "\n" for line in lines)
+
+
+def vps_ssh_cmd(token, phase, old_port, port, *, user="root", root=False, passwords=False, keys=False):
+    """Root-копии и откат живут вне home; подтверждение — новый вход целевым пользователем."""
+    if not re.fullmatch(r"[a-f0-9]{24}", token) or not re.fullmatch(LOGIN_RE, user):
+        raise ValueError("Invalid setup transaction")
+    settings = vps_settings(old_port, port, stage=phase == "stage", root=root and phase != "stage",
+                            passwords=passwords and phase != "stage", keys=keys)
+    if phase == "commit":
+        return f'umask 077; touch ~/.ssh-storage-vps-{token}.ok && echo SSH-STORAGE-VERIFIED'
+    if phase not in ("stage", "finish", "check"):
+        raise ValueError("Invalid setup phase")
+    preflight = ('command -v apt-get >/dev/null; command -v flock >/dev/null; command -v setsid >/dev/null; '
+                 'command -v sshd >/dev/null; sshd -t; '
+                 '[ -f /etc/ssh/sshd_config ] && [ ! -L /etc/ssh/sshd_config ]; '
+                 '[ -d /etc/ssh/sshd_config.d ] && [ ! -L /etc/ssh/sshd_config.d ]; '
+                 'for f in /etc/ssh/sshd_config.d/*.conf; do '
+                 '[ -e "$f" ] || continue; [ -f "$f" ] && [ ! -L "$f" ] || exit 6; done')
+    if phase == "check": return vps_root(preflight + '; echo SSH-STORAGE-CHECKED')
+    prefix = (f'R=/var/lib/ssh-storage; B=$R/vps-{token}; C={VPS_CONF}; '
+              'umask 077; [ ! -L "$R" ]; mkdir -p "$R"; '
+              '[ "$(stat -c %u "$R")" = 0 ]; [ "$(stat -c %a "$R")" = 700 ] || chmod 700 "$R"; '
+              '[ ! -L "$R/vps.lock" ]; exec 9>"$R/vps.lock"; flock -x 9; ')
+    if phase == "stage":
+        # Откат и подтверждение берут тот же flock: таймер не может восстановить файлы посреди записи.
+        rollback = (f'set -eu; R=/var/lib/ssh-storage; B=$R/vps-{token}; C={VPS_CONF}; '
+                    'exec 9>"$R/vps.lock"; flock -x 9; '
+                    f'[ "$(cat "$R/vps-active" 2>/dev/null)" = {token} ] || exit 0; '
+                    'cp -p "$B/main" /etc/ssh/sshd_config; '
+                    'for f in "$B"/conf/*.conf; do [ -f "$f" ] || continue; cp -p "$f" /etc/ssh/sshd_config.d/; done; '
+                    '[ -f "$B/conf/00-ssh-storage.conf" ] || rm -f "$C"; '
+                    'sshd -t; ' + SSHD_RESTART + '; echo rolled-back > "$B/status"; rm -f "$R/vps-active"')
+        watcher = ('echo $$ > "$B/watcher.pid"; touch "$B/ready"; '
+                   f'for n in $(seq 1 180); do sleep 1; '
+                   'if [ -f "$B/final" ] && [ -f "$H/.ssh-storage-vps-' + token + '.ok" ]; then '
+                   'exec 9>"$R/vps.lock"; flock -x 9; '
+                   f'[ "$(cat "$R/vps-active" 2>/dev/null)" = {token} ] || exit 0; '
+                   'echo committed > "$B/status"; rm -f "$R/vps-active"; exit 0; fi; done; '
+                   'exec sh "$B/rollback.sh"')
+        setup = (preflight + '; [ ! -e "$R/vps-active" ] || { echo "Another SSH setup is awaiting verification/rollback"; exit 8; }; '
+                 'mkdir "$B"; mkdir "$B/conf"; cp -p /etc/ssh/sshd_config "$B/main"; '
+                 'for f in /etc/ssh/sshd_config.d/*.conf; do [ -f "$f" ] || continue; cp -p "$f" "$B/conf/"; done; '
+                 f'H=$(getent passwd {user} | cut -d: -f6); [ -n "$H" ]; '
+                 f'printf "%s\\n" {shlex.quote(rollback)} > "$B/rollback.sh"; '
+                 f'printf "%s\\n" {token} > "$R/vps-active"; '
+                 'echo pending > "$B/status"; '
+                 f'R="$R" B="$B" H="$H" setsid nohup sh -c {shlex.quote(watcher)} '
+                 '>"$B/watcher.log" 2>&1 </dev/null 9>&- & '
+                 'for n in 1 2 3 4 5; do [ -f "$B/ready" ] && break; sleep 1; done; '
+                 'if [ ! -f "$B/ready" ] || ! kill -0 "$(cat "$B/watcher.pid" 2>/dev/null)" 2>/dev/null; then '
+                 'echo timer-failed > "$B/status"; rm -f "$R/vps-active"; echo "Rollback watcher failed to start"; exit 8; fi; ')
+    else:
+        setup = f'[ "$(cat "$R/vps-active" 2>/dev/null)" = {token} ]; '
+    # Перезаписываем только выбранные директивы, остальные настройки своего drop-in сохраняем.
+    names = [line.split()[0].lower() for line in settings.splitlines()]
+    pattern = "|".join(sorted(set(names)))
+    write = ''
+    if pattern:
+        write = (f'if [ -f "$C" ]; then awk \'tolower($1) !~ /^({pattern})$/\' "$C" > "$B/keep"; '
+                 'else : > "$B/keep"; fi; '
+                 f'printf "%s" {shlex.quote(settings)} > "$C"; cat "$B/keep" >> "$C"; ')
+    if old_port != port:
+        # Port — накопительная директива: одного раннего drop-in недостаточно, нужен снимок всех затронутых файлов.
+        write += ('for f in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do '
+                  '[ "$f" = "$C" ] && continue; [ -f "$f" ] || continue; '
+                  'sed -i "/^[[:space:]]*[Pp][Oo][Rr][Tt][[:space:]]/s/^/# ssh-storage: /" "$f"; done; ')
+    # Явный Include раньше любых значений в main; повторное чтение через wildcard не меняет первые значения.
+    write += ('{ printf "%s\\n" "Include $C"; awk -v line="Include $C" \'$0 != line\' /etc/ssh/sshd_config; } > "$B/main.new"; '
+              'cat "$B/main.new" > /etc/ssh/sshd_config; sshd -t; '
+              f'set -- $SSH_CONNECTION; E=$(sshd -T -C "user={user},addr=$1,host=$1,laddr=$3,lport={port}"); ')
+    expected = settings.splitlines()
+    for line in expected:
+        write += f'printf "%s\\n" "$E" | grep -Fxi -- {shlex.quote(line)} >/dev/null; '
+    if root and phase == "finish":
+        write += (f'sshd -T -C "user=root,addr=$1,host=$1,laddr=$3,lport={port}" '
+                  '| grep -Fxi "permitrootlogin no" >/dev/null; ')
+    if old_port != port and phase == "finish":
+        write += f'if printf "%s\\n" "$E" | grep -Ei "^port " | grep -Fvxi "port {port}"; then exit 7; fi; '
+    if old_port != port and phase == "stage":
+        write += (f'if command -v ufw >/dev/null && LC_ALL=C ufw status | grep -q "Status: active"; '
+                  f'then ufw allow {port}/tcp; fi; ')
+    if phase == "finish": write += 'touch "$B/final"; '
+    write += SSHD_RESTART + '; echo SSH-STORAGE-CONFIGURED'
+    # Ошибка возвращает исходную SSH-конфигурацию сразу; независимый таймер остаётся страховкой при обрыве процесса.
+    return vps_root(prefix + setup + 'trap \'rc=$?; trap - EXIT; if [ "$rc" != 0 ]; then '
+                    'flock -u 9; sh "$B/rollback.sh"; fi; exit "$rc"\' EXIT; ' + write)
 
 def keys_cmd(add=(), drop=(), keep=None, backup=True):
     """Команда для сервера: убрать строки с ключами drop; при keep — оставить только строки с этими ключами;
@@ -2457,7 +2606,7 @@ class PC:
                 header(s["name"])
                 a = menu([tr("Изменить (название, хост, порт, пользователь, имя)"), tr("Команда установки для сервера"),
                           tr("Удалить из списка"), tr("Обновить ключи на сервере (имя в подписи, резервный ключ)"),
-                          tr("Назад")], default=5)
+                          tr("Настроить VPS"), tr("Назад")], default=6)
                 if a == "1":
                     header(tr("изменить")); new = edit_server(s, sv)
                     if s.get("pending"): new["pending"] = True
@@ -2483,6 +2632,12 @@ class PC:
                     except (OSError, ConnectionError, ValueError): pass
                     print(green(tr("✓ Ключи на сервере обновлены")) if ok else red(tr("✗ Не удалось (вход или запись ключей)")))
                     pause()
+                elif a == "5":
+                    # Настройка требует собственного опасного сеанса, а не разрешения на правку списка.
+                    ch.close(); ch = None
+                    self.new_vps(s)
+                    return
+                elif a == "6": return
                 elif a == "3" and yes(red(tr('Удалить «{p0}» из списка?', p0=s['name']))):
                     print(cyan(tr("Подтвердите удаление на телефоне…")))
                     ok = ch.call({"t": "delete", "i": i, "old": s}).get("ok")
@@ -2490,7 +2645,7 @@ class PC:
         except (OSError, ConnectionError, ValueError, KeyError) as e:
             print(red(f"✗ {e}")); pause()
         finally:
-            ch.close()
+            if ch: ch.close()
 
     # --- разделы меню ---
     def pick_server(self, title):
@@ -2510,8 +2665,7 @@ class PC:
             # участнику команды (recovery == "") не показываем «Новый VPS» (у него нет резервного ключа — при потере телефона
             # сервер без паролей закроется насовсем) и управление участниками (это делает админ)
             adm = self.d["recovery"] != ""
-            items = [(tr("Список серверов (изменить / команда установки / удалить)"), self.servers), (tr("Добавить сервер"), self.add)] \
-                + ([(tr("Новый VPS: настроить с нуля"), self.new_vps)] if adm else []) \
+            items = [(tr("Список серверов (изменить / команда установки / удалить)"), self.servers), (tr("Добавить сервер"), self.add_menu)] \
                 + [(tr("Массовое добавление"), self.bulk_add), (tr("Массовое удаление"), self.bulk_delete),
                    (tr("Перевыпуск ключей (на всех серверах)"), self.rekey)] \
                 + ([(tr("Участники серверов (командный режим)"), self.members_menu)] if adm else [])
@@ -2541,7 +2695,8 @@ class PC:
         (tr("Перезагрузить сервер"), 3),
         (tr("Создать пользователя для участника (командный режим)"), 3),
         (tr("Проверка процессов (подмена системных, новые программы, скрытые процессы)"), 1),
-        (tr("Туннель к веб-панели (3x-ui и др.) — панель не торчит в интернет"), 1)]
+        (tr("Туннель к веб-панели (3x-ui и др.) — панель не торчит в интернет"), 1),
+        (tr("Настроить VPS"), 3)]
 
     def section_actions(self):
         s = self.pick_server(tr("действия на сервере"))
@@ -2583,6 +2738,7 @@ class PC:
                 elif a == "7": self.add_member(s); continue
                 elif a == "8": self.check_procs(s); continue
                 elif a == "9": self.tunnel(s); continue
+                elif a == "10": self.new_vps(s); continue
                 else:
                     print(yellow(tr("Этот пункт в разработке (этап 2).")))
                 pause()
@@ -2875,7 +3031,7 @@ class PC:
         finally: ch.close()
         pause()
 
-    def phone_ssh(self, ch, s, *cmd, tty=False, opts=()):
+    def phone_ssh(self, ch, s, *cmd, tty=False, opts=(), key_only=False):
         """ssh на сервер ключом телефона (подписи — на телефоне). Возвращает (код, stdout|None).
         Один вход: первое соединение становится мастером (ControlMaster) и заодно проверяет права;
         команда или интерактивный сеанс идут через него без новых подписей."""
@@ -2893,6 +3049,21 @@ class PC:
                        "-i", agent.pubfile(), "-o", "ControlMaster=auto",
                        "-o", f"ControlPath={cm}", "-o", "ControlPersist=120")
         try:
+            if key_only:
+                # -i добавляет ключ к IdentityFile из конфига, а не заменяет их. Изолируем проверку,
+                # сохраняя разрешённые настройки маршрута и проверки ключа сервера, но не другие идентичности.
+                config = subprocess.run(ssh_cmd(s, "-G"), capture_output=True, text=True)
+                if config.returncode: return 255, None
+                transport = {"hostname", "proxyjump", "proxycommand", "hostkeyalias", "userknownhostsfile",
+                             "globalknownhostsfile", "stricthostkeychecking", "hostkeyalgorithms", "checkhostip",
+                             "addressfamily", "bindaddress", "bindinterface", "connecttimeout", "connectionattempts"}
+                # Не BatchMode: на новом порту нужно разрешить явное подтверждение host key.
+                isolated = ["-F", os.devnull, "-o", "PreferredAuthentications=publickey",
+                            "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no"]
+                for line in config.stdout.splitlines():
+                    key, _, value = line.partition(" ")
+                    if key in transport and value and value != "none": isolated += ["-o", key + "=" + value]
+                base[1:1] = isolated
             p = subprocess.run(base + [RIGHTS_CMD], stdout=subprocess.PIPE, text=True)
             if p.returncode == 255: return 255, None  # вход не прошёл
             m = re.search(r"RIGHTS=([\w-]+)", p.stdout or "")
@@ -2936,60 +3107,155 @@ class PC:
             print(red(tr("✗ Не удалось отключить старые ключи — на сервере выполните вручную:"))); print(cyan(DISABLE_OLD_CMD))
         return ok
 
-    def new_vps(self):
-        header(tr("новый VPS: настроить с нуля"))
-        a = menu([tr("Только купил сервер: есть root (или пользователь с sudo) и пароль от хостера"),
-                  tr("Мне дали личного пользователя на чужом сервере (без root)"), tr("Назад")], default=1)
-        if a == "2":
-            print(dim(tr("Без root можно только своё: ключ телефона, резервный ключ, TERM в ~/.profile и отключить старые ключи.\n"
-                      "Порт, вход root и пароли сервера настраивает его владелец.")))
-            return self.add(extra=TERM_CMD + "; ")
-        if a != "1": return
-        host = ask(tr("IP / хост"), validate=host_ok)
-        old = int(ask(tr("Порт сейчас"), 22, validate=port_ok))
-        login = ask(tr("Логин от хостера"), "root", validate=user_ok)
-        user = ask(tr("Новый пользователь"), validate=lambda v: re.fullmatch(LOGIN_RE, v) and v != "root")
-        port = int(ask(tr("Новый порт SSH"), 1024 + secrets.randbelow(64000),
-                       validate=lambda v: port_ok(v) and 1024 <= int(v) and int(v) != old))
-        name = ask(tr("Название"), host)
-        s1 = {"name": name, "host": host, "port": old, "user": login}
-        if not check_reach(s1): return
-        s = new_id({"name": name, "host": host, "port": port, "user": user, "nick": pick_nick({}, self.d["servers"])})
-        print(tr('\nПлан для {p0}:\n  1. apt update; создать {p1} (sudo с паролем), TERM в ~/.profile\n', p0=bold(host), p1=user)
-              + dim(tr("     свежий список пакетов; работать не под root; цвета в терминале")) + tr('\n  2. {p0}: ключ телефона и резервный ключ\n', p0=user)
-              + dim(tr("     вход с телефона; резервный — если телефон потерян")) + tr('\n  3. SSH слушает порты {p0} и {p1} (пароль пока работает)\n', p0=old, p1=port)
-              + dim(tr("     новый порт — меньше ботов; старый — чтобы не запереться")) + tr('\n  4. проверить вход ключом телефона на порт {p0}\n', p0=port)
-              + dim(tr("     убедиться, что новый вход работает")) + tr('\n  5. только после этого: порт {p0}, вход root и пароли — отключить\n', p0=old)
-              + dim(tr("     пароль не подобрать; войти можно только ключом")) + "\n"
-              + dim(tr("  Если после шага 5 вход ключом не подтвердится за 3 мин — сервер сам вернёт шаг 3.")))
-        if not yes(tr("Продолжить?"), True): return
-        ch = self.session(tr('новый VPS {p0}', p0=name), danger=True)
-        if not ch: return
+    def add_menu(self):
+        a = menu([tr("Подключить существующий сервер"), tr("Настроить новый VPS"), tr("Назад")], default=1)
+        if a == "1": self.add()
+        elif a == "2": self.new_vps()
+
+    def vps_plan(self, source):
+        def choose(title, explanation):
+            print("\n" + bold(title)); print(dim(explanation))
+            a = menu([tr("Выполнить"), tr("Пропустить"), tr("Отмена настройки")], default=1)
+            if a not in ("1", "2"): raise InterruptedError()
+            return a == "1"
+        p = {"user": source["user"], "port": source["port"]}
         try:
-            r = ch.call({"t": "add", "server": s})
-            if not r.get("ok"): print(red(tr("✗ Отклонено на телефоне"))); pause(); return
-            inst = install_cmd(with_nick(r["line"], server_tag(s)), r["recovery"])
-            print(dim(tr('Захожу на {p0}@{p1}:{p2} — пароль от хостера (и sudo) вводите здесь, программа их не хранит…', p0=login, p1=host, p2=old)))
-            rc = subprocess.call(ssh_cmd(s1, "-t", "-o", "PubkeyAuthentication=no") + [vps_step1(user, old, port, inst)])
-            if rc: print(red(tr('✗ Шаг 1–3 не выполнен (код {p0}). Сервер не изменён или изменён частично — вход паролем работает.', p0=rc))); pause(); return
-            ch.call({"t": "added", "server": s})
-            self.cache([x for x in self.d["servers"] if (x["host"], x["user"]) != (host, user)] + [s])
-            print(green(tr('✓ {p0} создан, ключи прописаны, SSH слушает {p1} и {p2}', p0=user, p1=old, p2=port)))
-            print(dim(tr('Шаг 4–5: вход {p0}@{p1}:{p2} ключом телефона (sudo спросит пароль {p3})…', p0=user, p1=host, p2=port, p3=user)))
-            rc, _ = self.phone_ssh(ch, s, vps_step2(port), tty=True)
-            if rc: print(red(tr('✗ Вход ключом телефона или настройка не прошли (код {p0}). Старый вход паролем остался.', p0=rc))); pause(); return
-            time.sleep(2)
-            print(dim(tr("Проверяю вход заново (новое подключение)…")))
-            rc, out = self.phone_ssh(ch, s, "touch ~/.ssh-storage-ok && echo SSH-STORAGE-OK")
-            try: ch.call({"t": "result", "ok": "SSH-STORAGE-OK" in (out or "")})
-            except (OSError, ConnectionError, ValueError): pass
-            if "SSH-STORAGE-OK" in (out or ""):
-                print(green(tr('✓ Готово: вход только {p0}@{p1}:{p2} ключом телефона (или резервным). Root и пароли отключены.', p0=user, p1=host, p2=port)))
-            else:
-                print(red(tr('✗ Новый вход не подтвердился — через 3 мин сервер сам вернёт порты {p0}, {p1} и вход паролем.', p0=old, p1=port)))
-        except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e: print(red(f"✗ {e}"))
-        finally: ch.close()
+            p["update"] = choose(tr("Обновить список пакетов"), tr("apt update: только список доступных пакетов, без установки обновлений."))
+            p["create"] = choose(tr("Создать нового пользователя"), tr("Отдельный логин для входа вместо root. При пропуске остаётся текущий пользователь."))
+            if p["create"]:
+                p["user"] = ask(tr("Логин нового пользователя"), validate=lambda v: bool(re.fullmatch(LOGIN_RE, v)) and v != "root")
+            p["admin"] = choose(tr("Выдать права администратора"), tr("Добавить пользователя в sudo: административные команды с паролем. Пароль программа не сохраняет."))
+            p["term"] = choose(tr("Настроить цвета терминала"), tr("Добавить export TERM=xterm-256color в ~/.profile выбранного пользователя для следующих входов."))
+            p["keys"] = choose(tr("Настроить вход ключами приложения"), tr("Добавить публичный ключ телефона и резервный ключ. Чужие ключи сохраняются; приватный ключ на VPS не создаётся."))
+            change_port = choose(tr("Изменить порт SSH"), tr("Новый порт уменьшает шум от ботов, но не заменяет защиту ключами. Откройте его также в firewall хостера."))
+            if change_port:
+                p["port"] = int(ask(tr("Новый порт SSH"), 4724, validate=lambda v: port_ok(v) and int(v) != source["port"]))
+            p["root"] = choose(tr("Запретить вход root по SSH"), tr("Прямой SSH-вход под root перестанет работать. Права sudo у обычного пользователя сохраняются."))
+            p["passwords"] = choose(tr("Отключить вход по паролю SSH"), tr("Вход только ключами, включая отключение интерактивного пароля. Пароль для sudo остаётся."))
+        except InterruptedError:
+            return None
+        if p["root"] and p["user"] == "root":
+            print(red(tr("Нельзя запретить root-вход, оставив root целевым пользователем. Запустите мастер заново и измените выбор.")))
+            return None
+        if p["create"] and not p["keys"] and (change_port or p["root"] or p["passwords"]):
+            print(red(tr("Для нового пользователя без ключей нельзя проверить вход перед изменением SSH. Выберите установку ключей или пропустите изменения SSH.")))
+            return None
+        return p
+
+    def vps_remove_old(self, ch, source, target):
+        if self.skey(source) == self.skey(target): return
+        sv = ch.call({"t": "list"})["servers"]
+        if source not in sv or target not in sv: return
+        print(dim(tr("Удаляется только запись на ПК и телефоне. Пользователь, файлы и ключи на VPS остаются.")))
+        if yes(tr("Удалить старое подключение из списка?"), False):
+            if not ch.call({"t": "delete", "i": sv.index(source), "old": source}).get("ok"):
+                print(yellow(tr("Старое подключение оставлено в списке.")))
+            self.cache(ch.call({"t": "list"})["servers"])
+
+    def new_vps(self, source=None):
+        header(tr("Настроить VPS"))
+        if not self.d.get("recovery"):
+            print(yellow(tr("Настройка VPS доступна владельцу резервного доступа. Сначала выполните сопряжение."))); pause(); return
+        saved = source is not None
+        if source is None:
+            source = edit_server(servers=self.d["servers"])
+        if not check_reach(source): return
+        p = self.vps_plan(source)
+        if p is None: pause(); return
+        if not any(p[k] for k in ("update", "create", "admin", "term", "keys", "root", "passwords")) and p["port"] == source["port"]:
+            print(dim(tr("Все действия пропущены. Сервер не изменён."))); pause(); return
+        target = dict(source, user=p["user"], port=p["port"])
+        if self.skey(target) != self.skey(source):
+            target = new_id({k: v for k, v in target.items() if k not in ("id", "added", "pending")})
+        print(tr("\nЦелевое подключение: {p0}", p0=server_line(target)))
+        for k, title in (("update", tr("Обновить список пакетов")), ("create", tr("Создать нового пользователя")),
+                         ("admin", tr("Выдать права администратора")), ("term", tr("Настроить цвета терминала")),
+                         ("keys", tr("Настроить вход ключами приложения")), ("root", tr("Запретить вход root по SSH")),
+                         ("passwords", tr("Отключить вход по паролю SSH"))):
+            print("  " + title + ": " + (tr("Выполнить") if p[k] else tr("Пропустить")))
+        print(tr("  Порт SSH: {p0} → {p1}", p0=source["port"], p1=p["port"]))
+        print(yellow(tr("Нужны Ubuntu/Debian и root или sudo у исходного пользователя. Сохраните доступ к консоли хостера.")))
+        if not yes(tr("Выполнить выбранные действия?"), False): return
+        opts, tmp = [], None
+        use_phone = False
+        if saved:
+            a = menu([tr("Ключом телефона"), tr("Другим способом (пароль или SSH-ключ)"), tr("Назад")],
+                     default=2 if source.get("pending") else 1)
+            if a not in ("1", "2"): return
+            use_phone = a == "1"
+        if not use_phone:
+            opts, tmp = first_login()
+            if opts is None: return
+        ch = None
+        try:
+            ch = self.session(tr("Настроить VPS"), danger=True)
+            if ch: self.execute_vps(ch, source, target, p, opts, use_phone)
+        except (OSError, ConnectionError, ValueError, KeyError, StopIteration) as e:
+            print(red(f"✗ {e}"))
+            print(yellow(tr("Настройка не завершена. Изменения могли выполниться частично; старое подключение не удалено. Если SSH уже менялся, дождитесь отката через 3 минуты.")))
+        finally:
+            if ch: ch.close()
+            if tmp: shutil.rmtree(tmp, ignore_errors=True)
         pause()
+
+    def execute_vps(self, ch, source, target, p, opts, use_phone):
+        def source_run(command):
+            if use_phone:
+                sv = ch.call({"t": "list"})["servers"]
+                current = next(x for x in sv if self.skey(x) == self.skey(source))
+                return self.phone_ssh(ch, current, command, tty=True)[0]
+            return subprocess.call(ssh_cmd(source, "-t", *opts) + [command])
+
+        def store(record):
+            if not ch.call({"t": "added", "server": record}).get("ok"):
+                raise ValueError("Could not save connection on phone")
+            sv = ch.call({"t": "list"})["servers"]
+            if record not in sv: raise ValueError("Phone did not save connection")
+            self.cache(sv)
+
+        def failure():
+            print(yellow(tr("Настройка не завершена. Изменения могли выполниться частично; старое подключение не удалено. Если SSH уже менялся, дождитесь отката через 3 минуты.")))
+
+        # Не затираем метаданные существующего целевого подключения без подтверждения.
+        sv = ch.call({"t": "list"})["servers"]
+        existing = next((x for x in sv if self.skey(x) == self.skey(target)), None)
+        if existing:
+            if existing != source and not yes(tr("Целевое подключение уже есть. Использовать его запись?"), False): return False
+            target = dict(existing)
+        r = ch.call({"t": "add", "server": target})
+        if not r.get("ok"): print(red(tr("✗ Отклонено на телефоне"))); return False
+        token = secrets.token_hex(12)
+        ssh_change = p["port"] != source["port"] or p["root"] or p["passwords"] or p["keys"]
+        kwargs = {"user": target["user"], "root": p["root"], "passwords": p["passwords"], "keys": p["keys"]}
+        if ssh_change and source_run(vps_ssh_cmd(token, "check", source["port"], target["port"], **kwargs)):
+            failure(); return False
+        inst = install_cmd(with_nick(r["line"], server_tag(target)), r["recovery"]) if p["keys"] else ""
+        if source_run(vps_prepare_cmd(target["user"], create=p["create"], admin=p["admin"], term=p["term"], update=p["update"], install=inst)):
+            failure(); return False
+        pending = dict(source) if existing == source else dict(target, pending=True)
+        store(pending)
+        started = time.monotonic()
+        if ssh_change:
+            print(yellow(tr("SSH: включён независимый откат через 3 минуты до подтверждения нового входа.")))
+            if source_run(vps_ssh_cmd(token, "stage", source["port"], target["port"], **kwargs)):
+                failure(); return False
+        rc, _ = self.phone_ssh(ch, pending, "true", key_only=True)
+        if rc != 0:
+            failure(); return False
+        if ssh_change:
+            # Слишком медленное подтверждение не должно гоняться с серверным таймером отката.
+            if time.monotonic() - started > 150:
+                failure(); return False
+            if source_run(vps_ssh_cmd(token, "finish", source["port"], target["port"], **kwargs)):
+                failure(); return False
+            rc, out = self.phone_ssh(ch, pending, vps_ssh_cmd(token, "commit", source["port"], target["port"], **kwargs), key_only=True)
+            if rc != 0 or "SSH-STORAGE-VERIFIED" not in (out or "") or time.monotonic() - started > 170:
+                failure(); return False
+        target.pop("pending", None)
+        store(target)
+        print(green(tr("Готово: выбранные действия выполнены, новый вход ключом телефона проверен.")))
+        self.vps_remove_old(ch, source, target)
+        return True
 
     def add(self, extra=""):
         header(tr("новый сервер"))

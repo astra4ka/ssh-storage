@@ -125,20 +125,29 @@ One recovery password covers all your servers. Adding a server does not create a
 
 The program adds the phone key and the recovery key and prints `SSH-STORAGE-OK`. It does not change sshd settings here.
 
-### New VPS from scratch
+### Set up a VPS
 
-Servers, "New VPS: set up from scratch". There are two options.
+**Servers → Add server** offers **Connect an existing server** (install application keys without system configuration) and **Set up a new VPS**. For a saved connection, use **Servers → List → your server → Set up VPS**, or **Server actions → Set up VPS**.
 
-**I just bought a server.** You need the IP, root (or a sudo user) and the hoster password. The server must run Ubuntu or Debian. The program:
-1. updates the package list and creates your user with sudo (you choose the sudo password);
-2. adds the phone key and the recovery key;
-3. makes SSH listen on the old and the new port, with password login still on;
-4. checks the phone key login on the new port;
-5. only then turns off the old port, root login and password login.
+The setup wizard requires Ubuntu/Debian, root or sudo for the original login, and a paired phone with recovery access. Each change has an explanation and its own **Run / Skip** choice:
+1. refresh package lists (`apt update`, without installing updates);
+2. create a new user with the login you enter, or keep the original user;
+3. grant that user administrator privileges through password-protected sudo;
+4. add terminal colors (`TERM=xterm-256color`) to that user's `~/.profile`;
+5. install the existing phone public key and recovery key, preserving other keys;
+6. change the SSH port;
+7. disable direct root SSH login;
+8. disable SSH password and keyboard-interactive login, not the sudo password.
 
-If the new login is not confirmed within 3 minutes after step 5, the server restores the step 3 settings by itself. The sshd changes live in one file, `/etc/ssh/sshd_config.d/00-ssh-storage.conf`. Backups are named `*.ssh-storage.bak`, and each run overwrites the single copy.
+Review the plan before execution. No private key is generated on the VPS. Passwords are entered in the SSH terminal and are not saved by the program. A login already used by another account is not silently repurposed.
 
-**I was given a personal user on someone else's server.** You have no root. The program installs only your keys and `TERM` in `~/.profile`. The server owner controls the port, root login and passwords.
+For SSH changes, the wizard saves the original configuration, starts an independent three-minute rollback and keeps the old port available until a separate phone-key login on the target port succeeds. Only then are the selected access restrictions applied. A second fresh login confirms the result. If verification fails, the original SSH configuration is restored; user creation and other completed preparation steps are not undone. The timer starts **before the first SSH change**, not after the final restrictions, so approve phone prompts promptly.
+
+The managed drop-in is `/etc/ssh/sshd_config.d/00-ssh-storage.conf`; the main config includes it first, and explicit ports in other standard drop-ins are commented only when changing ports. Root-only per-run backups and transaction logs live under `/var/lib/ssh-storage/vps-*`. Pending setup blocks another setup from overwriting its rollback. Open a selected port in the provider's firewall yourself and keep the provider console available.
+
+The new connection is synchronized to the phone and computer and remains marked unverified until a fresh login succeeds. After success, you may remove the old connection **from the list only**; its server user, files and keys are not deleted. Keeping the old entry is the default. Skipped key installation may leave a newly created user without application access; SSH restrictions cannot be applied in that combination.
+
+**Personal account without root:** use **Connect an existing server**, not VPS setup; ask the server owner to change system settings.
 
 ### Connect to a server
 
@@ -252,7 +261,7 @@ What remains:
 
 **Can I still use plain `ssh`?** Yes, the program does not change it. Plain `ssh` just does not have the phone key.
 
-**What does the program leave on a server?** `authorized_keys` and its `.ssh-storage.bak` copy. After "New VPS", the file `/etc/ssh/sshd_config.d/00-ssh-storage.conf`. In team mode, the registry `/var/lib/ssh-storage/members`. With metrics on, `~/.ssh-storage-metrics` and a crontab line. The "Turn off" item removes the metrics.
+**What does the program leave on a server?** `authorized_keys` (key-management actions may also create `.ssh-storage.bak`). VPS setup adds `/etc/ssh/sshd_config.d/00-ssh-storage.conf`, its early Include in the main configuration, root-only transaction backups under `/var/lib/ssh-storage/vps-*`, and a verification marker in the target user's home. Selected user, sudo, profile and UFW changes remain. In team mode, the registry is `/var/lib/ssh-storage/members`. With metrics on, `~/.ssh-storage-metrics` and a crontab line; "Turn off" removes metrics.
 
 ---
 
@@ -265,8 +274,8 @@ What remains:
 | "ssh is missing: run pkg install openssh" | Run `pkg install openssh` in Termux |
 | "no SSH server found on this port" | Check the IP and port. The hoster firewall may block the port |
 | Adding a server failed | Run the command the computer shows on the server, or take it from the phone: the server, Install command |
-| "New VPS" stopped at steps 1 to 3 | Password login still works. Fix the reason from the message and retry |
-| No login after "New VPS" | Wait 3 minutes. The server restores the old port and password login by itself |
+| VPS setup stopped | Some preparation steps may have completed. Read the output; do not assume the server was unchanged. The old connection entry is kept |
+| No login after VPS SSH changes | Allow 3 minutes from the first SSH change for rollback to the pre-run configuration. If needed, use the provider console; check the root-only transaction status and watcher log under `/var/lib/ssh-storage/vps-*` |
 | Member: "user already exists and is not this member" | That login on the server is not your member. Choose another login |
 | Revoke: "failed (unreachable or sudo denied) - try again" | The server was unreachable or the sudo password was not entered. Retry for that server |
 | `ssh-storage: command not found` on the computer | Open a new terminal. Fallback: `python3 ~/.local/share/ssh-storage/sshstore.py` |

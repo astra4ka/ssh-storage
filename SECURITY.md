@@ -19,6 +19,7 @@ SSH Storage is experimental and has not had an independent security audit. Passi
 - Changing groups does not immediately remove privileges from already running processes. Revocation and role changes need separate live tests.
 - On systems without `/dev/shm`, temporary private keys may be written to disk. Memory can also be swapped out. Storage exclusively in RAM is not guaranteed on every operating system.
 - Concurrent instances are not tested. Startup cleanup of old temporary directories may interfere with another instance.
+- VPS setup has a root-owned per-server SSH transaction lock and a three-minute rollback timer. This is not a general concurrency guarantee for application state. The timer starts before staging SSH changes; user creation, sudo membership, profile changes, key installation and UFW rules are not rolled back. Check the root-only `status` and `watcher.log` in `/var/lib/ssh-storage/vps-*` if configuration or service restoration fails. Keep the provider console available.
 - Test migrations from earlier `pc.json`/`phone.json` files and legacy key comments before updating an existing installation.
 
 ## Reporting a problem

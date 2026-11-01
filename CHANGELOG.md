@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026.11.01
+
+### Added
+- A guided VPS setup with an explanation and Run/Skip choice for each change: package lists, a named new user, sudo privileges, terminal colors, application keys, SSH port and login restrictions.
+- Choose between connecting an existing server and setting up a new VPS when adding a server. Run the same wizard from a saved server's menu or Server actions.
+- Save a separate connection for a new login or port, verify fresh phone-key access, then optionally remove only the old connection entry from the phone and computer.
+
+### Safety
+- Back up the pre-run SSH configuration in a root-only per-run directory and schedule independent rollback before changing it. Block overlapping setup transactions and verify effective SSH settings before restarting.
+- Preserve skipped settings, other authorized keys, server accounts and files. Passwords and SSH private keys are not added to application state.
+- Synchronize the standalone application and the Python embedded in the NixOS/home-manager module.
+- The wizard remains experimental: automated tests are not a substitute for disposable VPS and real Android testing. Keep a provider console and a separate recovery path available.
+
 ## 2026.10.31
 
 ### Interface

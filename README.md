@@ -71,6 +71,10 @@ If you lose both the phone and recovery password, use your hosting provider's co
 
 The [full English manual](README.en.md) covers bulk imports, key rotation, team accounts, audit logging, diagnostics, metrics, VPS setup and uninstalling. These operations can change server access or remove users and files. Test them on a disposable server first.
 
+**VPS setup:** Servers → Add server offers “Connect an existing server” or “Set up a new VPS”. The setup wizard also works from a saved server's menu. Each change has a Run/Skip choice; it can create a named sudo user, install your existing phone/recovery public keys and verify a separate connection before offering to remove the old list entry. Keep your provider console available when changing SSH settings.
+
+For source changes, regenerate the standalone Nix module with `python3 scripts/sync_nix.py`; `python3 -m unittest discover -s tests -v` verifies that its embedded program matches `sshstore.py`.
+
 ## Development checks
 
 No third-party Python packages are required:
