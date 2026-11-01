@@ -241,8 +241,17 @@ class SSHTransactionTests(unittest.TestCase):
     def test_independent_watcher_rolls_back_after_parent_connection_exits(self):
         originals = {p: p.read_bytes() for p in self.ssh.rglob("*") if p.is_file()}
         (self.bin / "setsid").write_text('#!/bin/sh\nexec "$@"\n')
+        # Trigger simulated timer expiry only after stage exits, instead of timing 180 process launches on CI.
+        seq = self.bin / "seq"
+        seq.write_text('#!/bin/sh\nprintf "1\\n"\n')
+        seq.chmod(0o755)
+        real_sleep = shlex.quote(shutil.which("sleep"))
+        (self.bin / "sleep").write_text('#!/bin/sh\nif [ -n "${B-}" ]; then\n'
+                                        'while [ ! -f "$B/expire-timer" ]; do ' + real_sleep + ' 0.01; done\n'
+                                        'else exec ' + real_sleep + ' 0.01; fi\n')
         result = self.run_phase("stage", keys=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (self.base / f"state/vps-{self.token}/expire-timer").touch()
         self.wait_for_status("rolled-back")
         self.assertEqual({p: p.read_bytes() for p in self.ssh.rglob("*") if p.is_file()}, originals)
 
