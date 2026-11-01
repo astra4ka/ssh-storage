@@ -1084,13 +1084,13 @@ let
                         'cp -p "$B/main" /etc/ssh/sshd_config; '
                         'for f in "$B"/conf/*.conf; do [ -f "$f" ] || continue; cp -p "$f" /etc/ssh/sshd_config.d/; done; '
                         '[ -f "$B/conf/00-ssh-storage.conf" ] || rm -f "$C"; '
-                        'sshd -t; ' + SSHD_RESTART + '; echo rolled-back > "$B/status"; rm -f "$R/vps-active"')
+                        'sshd -t; ' + SSHD_RESTART + '; rm -f "$R/vps-active"; echo rolled-back > "$B/status"')
             watcher = ('echo $$ > "$B/watcher.pid"; touch "$B/ready"; '
                        f'for n in $(seq 1 180); do sleep 1; '
                        'if [ -f "$B/final" ] && [ -f "$H/.ssh-storage-vps-' + token + '.ok" ]; then '
                        'exec 9>"$R/vps.lock"; flock -x 9; '
                        f'[ "$(cat "$R/vps-active" 2>/dev/null)" = {token} ] || exit 0; '
-                       'echo committed > "$B/status"; rm -f "$R/vps-active"; exit 0; fi; done; '
+                       'rm -f "$R/vps-active"; echo committed > "$B/status"; exit 0; fi; done; '
                        'exec sh "$B/rollback.sh"')
             setup = (preflight + '; [ ! -e "$R/vps-active" ] || { echo "Another SSH setup is awaiting verification/rollback"; exit 8; }; '
                      'mkdir "$B"; mkdir "$B/conf"; cp -p /etc/ssh/sshd_config "$B/main"; '

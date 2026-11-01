@@ -257,6 +257,12 @@ class SSHTransactionTests(unittest.TestCase):
 
     def test_unprivileged_new_login_marker_cancels_rollback_after_finish(self):
         (self.bin / "setsid").write_text('#!/bin/sh\nexec "$@"\n')
+        # A completed status must mean lock cleanup is complete, even if removing the active marker is slow.
+        rm = self.bin / "rm"
+        rm.write_text('#!/bin/sh\nif [ "$2" = "' + str(self.base / 'state/vps-active') + '" ]; then '
+                      + shlex.quote(shutil.which("sleep")) + ' 0.2; fi\nexec '
+                      + shlex.quote(shutil.which("rm")) + ' "$@"\n')
+        rm.chmod(0o755)
         for phase in ("stage", "finish"):
             result = self.run_phase(phase, keys=True, root=True, passwords=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
