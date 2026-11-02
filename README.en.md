@@ -1,5 +1,55 @@
 # SSH Storage
 
+## Separate personal access without resetting team access
+
+If team-member mode was selected by mistake and no recovery password was ever
+created, use **Pairing → Profiles → Create / open personal profile** on both
+computer and phone. Do not delete the existing pairing or phone application data.
+This creates a new identity, not team administrator privileges.
+
+1. Update both devices to **2026.11.02.1** or newer. To update the phone, keep the
+   existing profile selected, run Wait for computer requests on the phone and an
+   ordinary session such as the server list on the computer. Compare the session
+   code and explicitly approve the update. Check access mode does not offer updates.
+   Do not re-pair the existing profile just to update it.
+2. On the phone choose Pairing → Profiles → Create / open personal profile and
+   confirm. A separate Keystore key and pairing identity are created; existing
+   keys, peers and servers stay in the existing profile.
+3. Choose the same action on the computer. Select Personal on both devices, then
+   start pairing on the phone and Pair with phone on the computer. Write down the
+   new recovery password separately and complete code verification. The personal
+   profile does not ask the ambiguous team-member question.
+4. Add the new VPS with independently authorized root/sudo access. Existing team
+   servers and permissions are not copied. Their administrator must separately
+   authorize the new identity if access is needed there.
+
+Return using Pairing → Profiles → Open existing profile. A plain `ssh-storage`
+launch still opens the existing profile; `ssh-storage --profile personal` opens
+the personal profile after creation. Only the selected phone profile listens;
+leave its waiting screen with Ctrl+C before switching. Language settings are also
+independent. Profile creation and switching never install keys on servers.
+
+Personal state lives in `profiles/personal/` beneath the state root. Do not copy
+existing credentials into it. Corrupt state or a missing initialized key fails
+closed instead of generating replacement credentials. Resetting a profile's
+servers/pairing preserves its SSH key. Full shared application removal is blocked
+while a personal profile exists, to avoid orphaning the other profile.
+Destructive Wipe key rotation is also blocked on computer and phone because both
+profiles may be authorized for the same server account. Use additive rotation to
+preserve the other identity's keys.
+
+Real Android Keystore and disposable-VPS verification is still required before
+using important servers. Automated tests use a fake at the hardware boundary.
+Keep your provider console and a separate recovery path available.
+
+## Check access mode
+
+On the computer, open **Pairing → Check access mode** and approve the session on the paired phone after comparing its code. If the phone already has a recovery key missing on this computer, the matching existing recovery password and explicit confirmation can restore that public key locally. The password is neither saved nor sent to the phone.
+
+Conflicting keys are not replaced. A phone without recovery access is not automatically promoted from member to owner: contact your team administrator, or arrange a separate personal-access setup if the original mode was selected by mistake. This check does not perform that setup.
+
+The check does not update the phone, change pairings, server keys, server lists or member permissions. The phone retains its usual audit entry for session approval or refusal. Do not delete phone app data to fix a mode selection; that can destroy your existing SSH access.
+
 The SSH key lives in Android Keystore on your phone; hardware backing depends on the device. The computer never gets that key. When you log in to a server, the computer asks the phone to sign the login, and you confirm it on the phone.
 
 **Experimental software without an independent audit.** Real Android Keystore, recovery, and VPS configuration changes still need testing on real test equipment. Do not use this as your only way into important servers. See [SECURITY.md](SECURITY.md).

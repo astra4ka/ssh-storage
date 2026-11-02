@@ -9,8 +9,13 @@ SSH Storage is experimental and has not had an independent security audit. Passi
 - The session code verifies the PC–phone channel. SSH signing-request validation checks the username and key, not the server address or the commands run after login. Hostbound requests are accepted, but the phone does not independently authenticate the supplied host key.
 - An infected computer can abuse an approved session or capture recovery input. Updating the phone from a computer executes code supplied by that computer; a SHA-256 checksum does not establish that the author is trusted.
 - The network protocol and Python cryptographic implementations have not had an independent cryptographic audit. Side-channel resistance is not claimed.
+- Personal and existing profiles have separate state, pairing secrets, Keystore aliases and recovery keys. Creating a profile grants no server privileges and never copies team authorization. Both are still controlled by the same OS user/Android application: profiles are not an OS sandbox against a compromised computer or phone. Application code/launcher and the phone listener port are shared. Only the selected phone profile serves requests; updates modify shared code after explicit approval.
+- Personal state uses private fixed directories and rejects symlink paths, malformed state and missing initialized keys. A personal instance lock prevents concurrent use of that profile, but it is not a general cross-profile/legacy-instance concurrency guarantee. Do not downgrade to a release without profile support or run outdated code against personal state.
+- While personal access exists, both the computer menu and phone protocol handler block destructive wipe-rekey. Otherwise overlapping authorization to one server account could let one profile accidentally remove the other's keys. Additive rekey remains available; this does not remove the need to trust an already authorized administrator.
 
 ## Before using important servers
+
+- Check access mode restores only an existing public recovery key on the computer after approval of an authenticated phone session, matching the existing recovery password locally, and explicit confirmation. It cannot bootstrap ownership for a team-member phone without a recovery key. The session remains in the phone audit journal. This is a repair tool, not a new server-side authorization boundary: editable PC menu state never grants Unix permissions, and the broader team-mode limitations below still apply.
 
 - Test on real Android hardware: Keystore, a real SSH login, denied approval, tunnels, updates and key rotation.
 - Test on a disposable VPS: recovery, failed new-key login, member revocation and re-enrollment, role reduction, deletion, disabling passwords and rollback.

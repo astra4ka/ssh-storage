@@ -4,7 +4,9 @@ SSH authentication with an Android phone. The phone holds an ECDSA key in Androi
 
 **Experimental and unaudited. Keep a separate recovery path.** Android Keystore, VPS provisioning, migration and team administration still need real-device testing. Team administration is not hardened for untrusted members. Read [SECURITY.md](SECURITY.md) before using it.
 
-The terminal interface is in English by default. Choose `Language / Язык` in the main menu on the computer and on the phone to switch to Russian. Each device stores its own choice in its state file (`pc.json` or `phone.json`), so it survives restarts, pairing and program updates. Choosing Erase all data also removes the saved language. See the [full English manual](README.en.md) or the [Russian manual](README.ru.md).
+The terminal interface is in English by default. Choose `Language / Язык` in the main menu on the computer and on the phone to switch to Russian. Each device/profile stores its own choice in its state file (`pc.json` or `phone.json`), so it survives restarts, pairing and program updates. The original profile's erase operation also removes its saved language. See the [full English manual](README.en.md) or the [Russian manual](README.ru.md).
+
+Selected team-member mode by mistake? Version 2026.11.02.1 adds **Pairing → Profiles → Create / open personal profile** on both devices, with independent keys and recovery access. It preserves the existing profile and does not grant access to team servers. See the manuals before setting it up; do not delete phone data or reset the existing pairing. A plain launch still opens the existing profile.
 
 ## Requirements
 

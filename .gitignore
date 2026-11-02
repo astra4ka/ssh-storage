@@ -4,6 +4,7 @@ __pycache__/
 pc.json*
 phone.json*
 vault.json*
+profiles/
 .pc.json.*
 .phone.json.*
 .vault.json.*

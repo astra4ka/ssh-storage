@@ -20,17 +20,68 @@
 Цвета — стандартные 16 ANSI-цветов, т.е. палитра вашего терминала.
 """
 import base64, getpass, hashlib, hmac, json, os, re, secrets, shlex, shutil, socket, struct
-import concurrent.futures, subprocess, sys, tempfile, threading, time
+import concurrent.futures, fcntl, subprocess, sys, tempfile, threading, time
 
-HERE = os.environ.get("SSHSTORE_DIR") or os.path.dirname(os.path.abspath(__file__))
-os.makedirs(HERE, mode=0o700, exist_ok=True)
+def private_profile_path(path, directory=False):
+    if os.path.islink(path): raise ValueError("Profile paths must not be symlinks")
+    st = os.stat(path)
+    if st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise ValueError("Profile paths must be private and owned by the current user")
+    if not (os.path.isdir(path) if directory else os.path.isfile(path)):
+        raise ValueError("Invalid profile path")
+
+def profile_directory(root, profile):
+    root = os.path.abspath(root)
+    if profile == "default": return root
+    if profile != "personal": raise ValueError("Unknown profile; use default or personal")
+    parent = os.path.join(root, "profiles")
+    path = os.path.join(parent, "personal")
+    private_profile_path(parent, directory=True)
+    private_profile_path(path, directory=True)
+    return path
+
+def requested_profile(args):
+    values = []
+    for i, arg in enumerate(args):
+        if arg == "--profile":
+            if i + 1 == len(args): raise ValueError("Missing profile ID")
+            values.append(args[i + 1])
+        elif arg.startswith("--profile="): values.append(arg.split("=", 1)[1])
+    if len(values) > 1 or values and values[0] not in ("default", "personal"):
+        raise ValueError("Use one profile: default or personal")
+    return values[0] if values else "default"
+
+def lock_profile(path):
+    lock = os.path.join(path, ".lock")
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        private_profile_path(lock)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd  # Non-inheritable: exec closes this instance's lock before opening the next.
+
+STATE_ROOT = os.path.abspath(os.environ.get("SSHSTORE_DIR") or os.path.dirname(os.path.abspath(__file__)))
+IS_PHONE = "com.termux" in os.environ.get("PREFIX", "") or "--phone" in sys.argv
+try:
+    PROFILE = requested_profile(sys.argv[1:])
+    HERE = profile_directory(STATE_ROOT, PROFILE)
+    if PROFILE == "personal":
+        private_profile_path(os.path.join(HERE, "phone.json" if IS_PHONE else "pc.json"))
+        PROFILE_LOCK = lock_profile(HERE)
+    else: os.makedirs(HERE, mode=0o700, exist_ok=True)
+except (OSError, ValueError) as e:
+    if __name__ != "__main__": raise
+    print(f"Cannot open profile: {e}. Open the existing profile and use Pairing → Profiles.", file=sys.stderr)
+    sys.exit(1)
 SSH = os.environ.get("SSHSTORE_SSH", "ssh")
 PC_STATE = os.path.join(HERE, "pc.json")
 LEGACY_VAULT = os.path.join(HERE, "vault.json")
 PHONE = os.path.join(HERE, "phone.json")
 TCP_PORT = 47232
 # Версия программы: ГГГГ.ММ.ДД[.N]. Поднимать при каждом выпуске — телефон не ставит версию старее своей.
-VERSION = "2026.11.01"
+VERSION = "2026.11.02.1"
 # Автообновление телефона с ПК (сообщения version / update_part / update_done). Эти имена и поля НЕ менять и не удалять:
 # по ним обновляются телефоны со старыми версиями. Новое — только новыми полями/типами (неизвестное обе стороны игнорируют).
 UPD_CHUNK, UPD_MAX = 256 * 1024, 8 << 20
@@ -41,7 +92,6 @@ def ver_key(v):
 def self_bytes():
     with open(os.path.abspath(__file__), "rb") as f: return f.read()
 RAM = "/dev/shm" if os.path.isdir("/dev/shm") else None
-IS_PHONE = "com.termux" in os.environ.get("PREFIX", "") or "--phone" in sys.argv
 PHONE_TAG, RECOVERY_TAG = "ssh-storage-phone", "ssh-storage-recovery"
 NICK_RE = r"[A-Za-z0-9_-]{1,32}"  # ник в подписи ключа: ssh-storage-phone:<ник>
 ANY_PHONE_TAG = PHONE_TAG + r"\(:[A-Za-z0-9_:-]*\)\{0,1\}"  # sed: старая подпись и с именем:ID:датой
@@ -103,7 +153,32 @@ EN_MESSAGES = {
     "Удаляется только запись на ПК и телефоне. Пользователь, файлы и ключи на VPS остаются.": "Only remove the entry on the computer and phone. The user, files and keys on the VPS remain.",
     "Удалить старое подключение из списка?": "Remove the old connection from the list?",
     "Старое подключение оставлено в списке.": "The old connection was kept in the list.",
-    "Настройка VPS доступна владельцу резервного доступа. Сначала выполните сопряжение.": "VPS setup is available to the recovery key owner. Pair your phone first.",
+    "Проверить режим доступа": "Check access mode",
+    "Личный": "Personal",
+    "Основной (существующий)": "Existing (default)",
+    "Профиль: {p0}": "Profile: {p0}",
+    "Ключ профиля отсутствует. Автоматическая замена запрещена.": "Profile key is missing. Automatic replacement is blocked.",
+    "Ключ профиля изменился. Использование запрещено; основной профиль не затронут.": "Profile key has changed. Use is blocked; the existing profile is unchanged.",
+    "Профили": "Profiles",
+    "Создать / открыть личный профиль": "Create / open personal profile",
+    "Открыть основной профиль": "Open existing profile",
+    "Личный профиль создаётся отдельно на ПК и телефоне. Обновите приложение на обоих устройствах и выберите личный профиль на каждом перед сопряжением.": "Create the personal profile separately on computer and phone. Update the app on both devices and select Personal on each before pairing.",
+    "Новый профиль начнётся без серверов и прав. Существующие ключи, резервный доступ и сопряжения не изменятся. Доступ к серверам нужно предоставить отдельно.": "The new profile starts without servers or permissions. Existing keys, recovery access and pairings stay unchanged. Server access must be granted separately.",
+    "Создать отдельный личный профиль на этом устройстве?": "Create a separate personal profile on this device?",
+    "Профили не совпадают. Выберите один и тот же профиль на ПК и телефоне; основной профиль не изменён.": "Profiles do not match. Select the same profile on computer and phone; the existing profile is unchanged.",
+    "Для личного профиля нужен резервный ключ. Сопряжение отменено без изменений.": "A personal profile needs a recovery key. Pairing cancelled without changes.",
+    "Полное удаление приложения заблокировано: существует личный профиль. Можно сбросить серверы и сопряжение только выбранного профиля, сохранив его SSH-ключ.": "Full application removal is blocked because a personal profile exists. You can reset only the selected profile's servers and pairing while keeping its SSH key.",
+    "Режим «затереть» заблокирован при наличии личного профиля: он может удалить доступ другого профиля. Используйте режим «Добавить».": "Wipe mode is blocked while a personal profile exists: it could remove the other profile's access. Use Add mode instead.",
+    "Проверка не меняет настройки телефона, серверы, ключи и сопряжения. На телефоне остаётся обычная запись о сеансе. Резервный пароль не отправляется на телефон и не сохраняется.": "This check does not change phone settings, servers, keys or pairings. The phone keeps its usual session audit entry. The recovery password is never sent to the phone or saved.",
+    "Телефон сопряжён, но на ПК нет резервного доступа. Откройте «Сопряжение» → «Проверить режим доступа».": "The phone is paired, but this computer has no recovery access. Open Pairing → Check access mode.",
+    "На телефоне резервный доступ не настроен. Автоматическая смена участника на владельца запрещена. Текущие подключения сохранены; в команде обратитесь к администратору. Если режим выбран ошибочно, потребуется отдельная настройка личного доступа — эта проверка её не выполняет.": "Recovery access is not configured on the phone. Automatic promotion from member to owner is blocked. Existing connections are unchanged; contact your team administrator. If you chose the mode by mistake, a separate personal-access setup is needed; this check does not perform it.",
+    "Некорректный ответ телефона; настройки не изменены.": "Invalid phone response; settings are unchanged.",
+    "Резервные ключи ПК и телефона различаются. Автоматическая замена запрещена; настройки не изменены.": "The computer and phone recovery keys differ. Automatic replacement is blocked; settings are unchanged.",
+    "Резервный ключ ПК совпадает с телефоном. Изменения не нужны; права на серверах проверяются отдельно.": "The computer recovery key matches the phone. No changes are needed; server permissions are checked separately.",
+    "Резервный пароль владельца (Enter — отмена): ": "Owner recovery password (Enter to cancel): ",
+    "Пароль не соответствует резервному ключу телефона. Настройки не изменены.": "The password does not match the phone recovery key. Settings are unchanged.",
+    "Восстановить на этом ПК существующий резервный доступ? Серверы и телефон не изменятся.": "Restore existing recovery access on this computer? Servers and phone will not change.",
+    "Резервный доступ восстановлен только на этом ПК. Права на серверах и доступ других участников не изменены.": "Recovery access restored on this computer only. Server permissions and other members' access are unchanged.",
     "Все действия пропущены. Сервер не изменён.": "All actions skipped. The server was not changed.",
     "\nЦелевое подключение: {p0}": "\nTarget connection: {p0}",
     "  Порт SSH: {p0} → {p1}": "  SSH port: {p0} → {p1}",
@@ -746,9 +821,39 @@ EN_MESSAGES = {
 }
 # END GENERATED TRANSLATIONS
 
+def profile_label():
+    return tr("Личный") if PROFILE == "personal" else tr("Основной (существующий)")
+
+def shared_profiles():
+    return PROFILE == "personal" or os.path.lexists(os.path.join(STATE_ROOT, "profiles", "personal"))
+
+def program_args(profile=None, install=False):
+    profile = PROFILE if profile is None else profile
+    if profile not in ("default", "personal"): raise ValueError("Unknown profile")
+    return ([sys.executable, os.path.abspath(__file__)] + (["--phone"] if IS_PHONE else [])
+            + ["--profile", profile] + (["--install"] if install else []))
+
 def restart_program():
     # Язык влияет и на модульные константы (тексты скриптов для сервера), поэтому применяется перезапуском.
-    os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + [a for a in sys.argv[1:] if a != "--install"])
+    os.execv(sys.executable, program_args())
+
+def profiles_menu():
+    header(tr("Профили"))
+    print(tr("Профиль: {p0}", p0=profile_label()))
+    print(dim(tr("Личный профиль создаётся отдельно на ПК и телефоне. Обновите приложение на обоих устройствах и выберите личный профиль на каждом перед сопряжением.")))
+    a = menu([tr("Создать / открыть личный профиль"), tr("Открыть основной профиль"), tr("Назад")], default=3)
+    try:
+        if a == "1":
+            if not os.path.lexists(os.path.join(STATE_ROOT, "profiles", "personal")):
+                print(yellow(tr("Новый профиль начнётся без серверов и прав. Существующие ключи, резервный доступ и сопряжения не изменятся. Доступ к серверам нужно предоставить отдельно.")))
+                if not yes(tr("Создать отдельный личный профиль на этом устройстве?"), False): return
+                create_personal_profile(STATE_ROOT, phone=IS_PHONE)
+            path = profile_directory(STATE_ROOT, "personal")
+            load_profile_state(os.path.join(path, "phone.json" if IS_PHONE else "pc.json"))
+            os.execv(sys.executable, program_args("personal"))
+        elif a == "2": os.execv(sys.executable, program_args("default"))
+    except (OSError, ValueError) as e:
+        print(red(f"✗ {e}")); pause()
 
 def language_settings(state, save, apply=None):
     header(tr("Language / Язык"))
@@ -989,6 +1094,12 @@ def new_id(s):
 def with_nick(line, nick):
     """Ключ телефона с подписью для сервера: ssh-storage-phone[:<ник>]."""
     return line.rsplit(" ", 1)[0] + " " + (f"{PHONE_TAG}:{nick}" if nick else PHONE_TAG)
+
+def valid_recovery_line(line):
+    if not isinstance(line, str) or not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+ " + RECOVERY_TAG, line): return False
+    try: blob = base64.b64decode(line.split()[1], validate=True)
+    except ValueError: return False
+    return len(blob) == 51 and blob.startswith(sstr(b"ssh-ed25519") + struct.pack(">I", 32))
 
 def install_cmd(phone_line, rec_line):
     """Команда для сервера: обновить подпись своего ключа телефона (тот же ключ с любым именем),
@@ -1481,6 +1592,58 @@ RIGHTS = {  # уровень → (название, ранг)
 NEED = {1: tr("любые права"), 2: tr("доступ к журналам (группа adm или systemd-journal) или sudo"), 3: tr("root или sudo")}
 
 # ---------- файлы ----------
+def load_profile_state(path):
+    private_profile_path(path)
+    with open(path) as f: d = json.load(f)
+    if not isinstance(d, dict) or d.get("profile") != "personal" or d.get("profile_schema") != 1:
+        raise ValueError("Invalid personal profile state; refusing to reset it")
+    secret = "priv" if os.path.basename(path) == "phone.json" else "me"
+    if not isinstance(d.get(secret), str) or not re.fullmatch(r"[0-9a-f]{64}", d[secret]):
+        raise ValueError("Invalid personal pairing identity")
+    if not isinstance(d.get("servers"), list) or not (d.get("recovery") is None or isinstance(d["recovery"], str) and d["recovery"]):
+        raise ValueError("Invalid personal recovery or server state")
+    if secret == "priv":
+        identity = d.get("profile_id")
+        if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{32}", identity):
+            raise ValueError("Invalid personal key namespace")
+        if not isinstance(d.get("alias"), str) or not re.fullmatch("ssh-storage-personal-" + identity + r"-[0-9a-f]{12}", d["alias"]):
+            raise ValueError("Invalid personal Keystore alias")
+        if not isinstance(d.get("peers"), dict) or type(d.get("key_initialized")) is not bool:
+            raise ValueError("Invalid personal phone state")
+        if d["key_initialized"] and not isinstance(d.get("ssh_public"), str):
+            raise ValueError("Missing personal public key; refusing to replace it")
+        if not d["key_initialized"] and ("ssh_public" in d or d["peers"] or d["servers"] or d["recovery"] is not None):
+            raise ValueError("Used personal identity marked uninitialized; refusing to replace its key")
+    elif "phone" not in d or d["phone"] is not None and not isinstance(d["phone"], dict):
+        raise ValueError("Invalid personal phone association")
+    return d
+
+def create_personal_profile(root, phone=False):
+    parent = os.path.join(os.path.abspath(root), "profiles")
+    try: os.mkdir(parent, 0o700)
+    except FileExistsError: pass
+    private_profile_path(parent, directory=True)
+    path = os.path.join(parent, "personal")
+    state = os.path.join(path, "phone.json" if phone else "pc.json")
+    try: os.mkdir(path, 0o700)
+    except FileExistsError:
+        profile_directory(root, "personal")
+        load_profile_state(state)  # Never overwrite an existing or unfinished identity.
+        return path
+    d = {"profile": "personal", "profile_schema": 1, "servers": [], "recovery": None}
+    if phone:
+        identity = secrets.token_hex(16)
+        d.update(priv=secrets.token_hex(32), peers={}, profile_id=identity,
+                 alias="ssh-storage-personal-" + identity + "-" + secrets.token_hex(6), key_initialized=False)
+    else:
+        d.update(me=secrets.token_hex(32), phone=None)
+    try: save_json(state, d)
+    except BaseException:
+        try: os.rmdir(path)  # Only our own still-empty directory; never delete unknown files.
+        except OSError: pass
+        raise
+    return path
+
 def save_json(path, obj):
     fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", dir=os.path.dirname(os.path.abspath(path)))
     try:
@@ -1581,7 +1744,8 @@ def find_phone(want_fp=None, mode=None):
     for left in (3, 2, 1, 0):  # Enter — искать снова: введённое до этого не теряется
         print(dim(tr("Ищу телефон в сети…")))
         for _ in range(3):  # первый проход часто будит Wi-Fi телефона, отвечает он на следующем
-            phones = [p for p in discover() if (not want_fp or p["fp"] == want_fp) and (not mode or p["mode"] == mode)]
+            phones = [p for p in discover() if p.get("profile", "default") == PROFILE
+                      and (not want_fp or p["fp"] == want_fp) and (not mode or p["mode"] == mode)]
             if phones: break
         if len(phones) == 1:
             return phones[0]["ip"], TCP_PORT
@@ -1750,8 +1914,9 @@ class Keystore:
         try: return {k["alias"]: k for k in json.loads(r.stdout or "[]")}
         except ValueError: return {}
 
-    def ensure(self):
+    def ensure(self, create=True):
         if self.ALIAS not in self._list():
+            if not create: raise RuntimeError(tr("Ключ профиля отсутствует. Автоматическая замена запрещена."))
             print(dim(tr("Создаю ключ в Android Keystore…")))
             subprocess.run(["termux-keystore", "generate", self.ALIAS, "-a", "EC", "-s", "256"],
                            capture_output=True, timeout=60)
@@ -1771,12 +1936,30 @@ class Keystore:
 
 class Phone:
     def __init__(self, ks):
-        self.d = load_json(PHONE, {"priv": secrets.token_bytes(32).hex(), "peers": {},
-                                   "servers": [], "recovery": None})
+        self.d = load_profile_state(PHONE) if PROFILE == "personal" else load_json(PHONE, {
+            "priv": secrets.token_bytes(32).hex(), "peers": {}, "servers": [], "recovery": None})
         self.priv = bytes.fromhex(self.d["priv"])
         self.pub = pubkey(self.priv)
         self.ks, self.mode = ks, "idle"
         ks.ALIAS = self.d.get("alias", Keystore.ALIAS)  # после перевыпуска — новый alias
+        if PROFILE == "default" and ks.ALIAS.startswith("ssh-storage-personal-"):
+            raise ValueError("The existing profile cannot use a personal Keystore alias")
+
+    def new_key_alias(self):
+        if PROFILE == "personal":
+            return "ssh-storage-personal-" + self.d["profile_id"] + "-" + secrets.token_hex(6)
+        return "ssh-storage-" + secrets.token_hex(3)
+
+    def ensure_key(self):
+        if PROFILE == "default": self.ks.ensure(); return
+        initialized = self.d["key_initialized"]
+        self.ks.ensure(create=not initialized)
+        public = self.ks.line()
+        if initialized and public != self.d["ssh_public"]:
+            raise RuntimeError(tr("Ключ профиля изменился. Использование запрещено; основной профиль не затронут."))
+        if not initialized:
+            self.d.update(key_initialized=True, ssh_public=public)
+            self.save()
 
     def save(self): save_json(PHONE, self.d)
 
@@ -1788,7 +1971,7 @@ class Phone:
 
     def info(self):
         return {"app": "sshstore", "name": socket.gethostname() or "phone",
-                "fp": fingerprint(self.pub), "mode": self.mode}
+                "fp": fingerprint(self.pub), "mode": self.mode, "profile": PROFILE}
 
     def serve(self, mode):
         self.mode = mode
@@ -1817,7 +2000,7 @@ class Phone:
                         self.session(conn, msg)
                         if getattr(self, "restart", False):  # новая версия уже на месте — запускаем её
                             conn.close(); srv.close()
-                            print(dim(tr("Перезапуск…"))); os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), "--install"])
+                            print(dim(tr("Перезапуск…"))); os.execv(sys.executable, program_args(install=True))
                 except (ConnectionError, OSError, ValueError, KeyError, TypeError, IndexError, RuntimeError) as e:
                     print(red(f"✗ {e}\n"))
                 finally:
@@ -1828,14 +2011,17 @@ class Phone:
             srv.close(); self.mode = "idle"
 
     def pair(self, conn, msg):
+        if msg.get("profile", "default") != PROFILE:
+            raise ValueError(tr("Профили не совпадают. Выберите один и тот же профиль на ПК и телефоне; основной профиль не изменён."))
         cpub, commit = bytes.fromhex(msg["pub"]), bytes.fromhex(msg["commit"])
         name = str(msg.get("name", tr("компьютер")))[:40]
         nP = secrets.token_bytes(32)
-        send_raw(conn, {"pub": self.pub.hex(), "n": nP.hex()})
+        send_raw(conn, {"pub": self.pub.hex(), "n": nP.hex(), "profile": PROFILE})
         nC = bytes.fromhex(recv_raw(conn)["n"])
         if not hmac.compare_digest(H(b"commit", nC), commit):
             raise ConnectionError(tr("нарушен протокол — возможна атака"))
         header(tr("сопряжение"))
+        print(tr("Профиль: {p0}", p0=profile_label()))
         print(tr('  Компьютер: {p0}  {p1}\n', p0=bold(name), p1=dim(fingerprint(cpub))))
         print(tr('  Введите на компьютере код:  {p0}\n', p0=mag(bold(sas(cpub, self.pub, nC, nP)))))
         ok = yes(blue(tr("Компьютер написал «✓ Код верный»?")))
@@ -1844,6 +2030,8 @@ class Phone:
             print(red(tr("✗ Сопряжение отменено"))); pause(); return False
         ch = Chan(conn, H(b"pair", x25519(self.priv, cpub), nC, nP), "p")
         rec = ch.recv()["recovery"]
+        if PROFILE == "personal" and not valid_recovery_line(rec):
+            raise ValueError(tr("Для личного профиля нужен резервный ключ. Сопряжение отменено без изменений."))
         if rec and not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+ " + RECOVERY_TAG, rec): raise ValueError("bad recovery")
         ch.send({"line": self.ks.line()})
         self.d["peers"] = {cpub.hex(): {"name": name}}
@@ -1853,6 +2041,8 @@ class Phone:
         return True
 
     def session(self, conn, msg):
+        if msg.get("profile", "default") != PROFILE:
+            raise ValueError(tr("Профили не совпадают. Выберите один и тот же профиль на ПК и телефоне; основной профиль не изменён."))
         cpub = bytes.fromhex(msg["id"])
         peer = self.d["peers"].get(cpub.hex())
         if not peer:
@@ -1865,6 +2055,7 @@ class Phone:
         hello = ch.recv()
         intent, danger = str(hello.get("intent", "?"))[:120], bool(hello.get("danger"))
         print(bell() + bold(tr('Запрос от «{p0}»: {p1}', p0=peer['name'], p1=intent)))
+        print(tr("Профиль: {p0}", p0=profile_label()))
         if danger: print(red(bold(tr("   ⚠ ОПАСНОЕ ДЕЙСТВИЕ — подтверждайте, только если запускали его сами."))))
         print(tr('   Код сеанса:  {p0}', p0=mag(bold(session_code(k)))))
         print(dim(tr("   Разрешайте, только если на компьютере тот же код.")))
@@ -1926,6 +2117,9 @@ class Phone:
                 print((green("  ✓ ") if ok else red("  ✗ ")) + (text or intent))
                 ch.send({"ok": True})
             elif t == "rekey":
+                if m.get("wipe") and shared_profiles():
+                    print(yellow(tr("Режим «затереть» заблокирован при наличии личного профиля: он может удалить доступ другого профиля. Используйте режим «Добавить».")))
+                    ch.send({"ok": False}); continue
                 new_rec = m.get("recovery")
                 if pending or new_rec and not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+ " + RECOVERY_TAG, new_rec):
                     ch.send({"ok": False}); continue
@@ -1941,13 +2135,15 @@ class Phone:
                 if not ok: ch.send({"ok": False}); continue
                 nks = None
                 if m.get("phone"):
-                    nks = Keystore(); nks.ALIAS = f"ssh-storage-{secrets.token_hex(3)}"; nks.ensure()
+                    nks = Keystore(); nks.ALIAS = self.new_key_alias(); nks.ensure()
                 pending = {"ks": nks, "recovery": new_rec}
                 ch.send({"ok": True, "line": nks.line() if nks else None})
             elif t == "rekey_commit":
                 if not pending: ch.send({"ok": False}); continue
                 old = self.ks
-                if pending["ks"]: self.ks = pending["ks"]; self.d["alias"] = self.ks.ALIAS
+                if pending["ks"]:
+                    self.ks = pending["ks"]; self.d["alias"] = self.ks.ALIAS
+                    if PROFILE == "personal": self.d.update(key_initialized=True, ssh_public=self.ks.line())
                 if pending["recovery"]: self.d["recovery"] = pending["recovery"]
                 self.save()
                 if pending["ks"]:
@@ -2146,9 +2342,10 @@ def phone_main():
         print(tr("Установите приложение ") + bold("Termux:API") + tr(" из F-Droid и выполните: ") + bold("pkg install termux-api"))
         sys.exit(1)
     ks = Keystore()
-    ph = Phone(ks); ks.ensure()
+    ph = Phone(ks); ph.ensure_key()
     while True:
         header(tr("телефон"))
+        print(tr("Профиль: {p0}", p0=profile_label()))
         print(f"  {dim(tr('отпечаток'))}  {fingerprint(ph.pub)}")
         print(f"  {dim('IP')}         {local_ip()}")
         print(f"  {dim(tr('ключ SSH'))}   " + (green(tr("в защищённом чипе")) if ph.ks.hardware else yellow(tr("в Keystore (без отдельного чипа)"))))
@@ -2165,10 +2362,11 @@ def phone_main():
         elif ch == "2": ph.servers_menu()
         elif ch == "3":
             header(tr("сопряжение"))
-            a = menu([tr("Начать сопряжение"), tr("Отменить сопряжение"), tr("Назад")], default=3 if peers else 1)
+            a = menu([tr("Начать сопряжение"), tr("Отменить сопряжение"), tr("Профили"), tr("Назад")], default=4 if peers else 1)
             if a == "1": header(tr("сопряжение")); ph.serve("pair")
             elif a == "2" and peers and yes(red(tr("Удалить сопряжение с компьютером?"))):
                 ph.d["peers"] = {}; ph.save()
+            elif a == "3": profiles_menu()
         elif ch == "4":
             header(tr("специальные возможности"))
             a = menu([tr("Журнал одобрений"), tr("Мой публичный ключ (отправить админу команды)"), tr("Стереть все данные"), tr("Назад")], default=4)
@@ -2194,9 +2392,18 @@ def phone_wipe(ks):
     if a == "1":
         print(yellow(tr("\nУдалится список серверов и сопряжение. Потом — новое сопряжение с компьютером.")))
         if not confirm_wipe(): return False
-        if os.path.exists(PHONE): os.remove(PHONE)
+        if PROFILE == "personal":
+            state = load_profile_state(PHONE)
+            state = {k: v for k, v in state.items() if k in (
+                "profile", "profile_schema", "profile_id", "alias", "key_initialized", "ssh_public", "language")}
+            state.update(priv=secrets.token_hex(32), peers={}, servers=[], recovery=None)
+            save_json(PHONE, state)
+        elif os.path.exists(PHONE): os.remove(PHONE)
         print(green(tr("✓ Стёрто. Запустите ssh-storage заново."))); return True
     if a == "2":
+        if shared_profiles():
+            print(yellow(tr("Полное удаление приложения заблокировано: существует личный профиль. Можно сбросить серверы и сопряжение только выбранного профиля, сохранив его SSH-ключ.")))
+            pause(); return False
         print(red(bold(tr("\n⚠ Ключ SSH будет удалён навсегда: НИ ОДИН сервер больше не пустит этот телефон."))))
         print(yellow(tr("  Вернуть доступ можно только резервным паролем (на компьютере → «Специальные возможности» → «Восстановление»).")))
         if not confirm_wipe(): return False
@@ -2454,8 +2661,8 @@ def cleanup_stale():
 
 class PC:
     def __init__(self):
-        self.d = load_json(PC_STATE, {"me": secrets.token_bytes(32).hex(), "phone": None,
-                                      "recovery": None, "servers": []})
+        self.d = load_profile_state(PC_STATE) if PROFILE == "personal" else load_json(PC_STATE, {
+            "me": secrets.token_bytes(32).hex(), "phone": None, "recovery": None, "servers": []})
     def save(self): save_json(PC_STATE, self.d)
     @property
     def me(self): return bytes.fromhex(self.d["me"])
@@ -2470,7 +2677,7 @@ class PC:
         self.d["servers"] = [s for s in servers if server_ok(s)]; self.save()
 
     # --- сеанс с телефоном ---
-    def session(self, intent, danger=False):
+    def session(self, intent, danger=False, check_updates=True):
         if not self.d["phone"]:
             print(yellow(tr("Телефон не сопряжён: пункт «Сопряжение» → «Сопряжение с телефоном»."))); pause(); return None
         print(dim(tr("На телефоне: ssh-storage → «Ожидать запросы компьютера».")))
@@ -2479,7 +2686,7 @@ class PC:
             if not addr: return None
             sock = socket.create_connection(addr, timeout=10); sock.settimeout(300)
             ce_priv = secrets.token_bytes(32); ce = pubkey(ce_priv)
-            send_raw(sock, {"t": "hello", "id": pubkey(self.me).hex(), "e": ce.hex()})
+            send_raw(sock, {"t": "hello", "id": pubkey(self.me).hex(), "e": ce.hex(), "profile": PROFILE})
             pe = bytes.fromhex(recv_raw(sock)["e"])
             ppub = bytes.fromhex(self.d["phone"]["pub"])
             k = H(b"kk", x25519(ce_priv, pe), x25519(self.me, pe), x25519(ce_priv, ppub), ce, pe)
@@ -2489,7 +2696,7 @@ class PC:
             print(cyan(tr("  Подтвердите на телефоне, если там тот же код…")))
             if not ch.recv().get("allow"):
                 print(red(tr("✗ Отклонено на телефоне"))); ch.close(); pause(); return None
-            self.offer_update(ch)
+            if check_updates: self.offer_update(ch)
             return ch
         except (OSError, ConnectionError, ValueError, KeyError) as e:
             print(red(f"✗ {e}")); pause(); return None
@@ -2508,11 +2715,61 @@ class PC:
 
     def ensure_recovery(self):
         if self.d["recovery"] is not None: return
+        if PROFILE == "personal":
+            self.d["recovery"] = self.new_recovery(); self.save(); return
         # S.3: в командном режиме резервный пароль только у админа, участник восстанавливается через админа
         print(dim(tr("«Да» — только если админ команды сам выдал вам доступ. Иначе ответьте «нет».")))
         if yes(tr("Это компьютер участника команды (резервный пароль хранит админ)?"), False):
             self.d["recovery"] = ""; self.save(); return
         self.d["recovery"] = self.new_recovery(); self.save()
+
+    def repair_access(self):
+        """Restore an existing owner's local public key; never promote or re-pair a member."""
+        header(tr("Проверить режим доступа"))
+        print(dim(tr("Проверка не меняет настройки телефона, серверы, ключи и сопряжения. На телефоне остаётся обычная запись о сеансе. Резервный пароль не отправляется на телефон и не сохраняется.")))
+        if not self.d.get("phone"):
+            print(yellow(tr("Телефон не сопряжён: пункт «Сопряжение» → «Сопряжение с телефоном»."))); pause(); return
+        ch = self.session(tr("Проверить режим доступа"), check_updates=False)
+        if not ch: return
+        try:
+            r = ch.call({"t": "list"})
+            if not isinstance(r, dict) or "recovery" not in r:
+                raise ValueError(tr("Некорректный ответ телефона; настройки не изменены."))
+            rec = r["recovery"]
+            if rec is None or rec == "":
+                print(yellow(tr("На телефоне резервный доступ не настроен. Автоматическая смена участника на владельца запрещена. Текущие подключения сохранены; в команде обратитесь к администратору. Если режим выбран ошибочно, потребуется отдельная настройка личного доступа — эта проверка её не выполняет.")))
+                return
+            if not isinstance(rec, str) or not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+ " + RECOVERY_TAG, rec):
+                raise ValueError(tr("Некорректный ответ телефона; настройки не изменены."))
+            blob = base64.b64decode(rec.split()[1], validate=True)
+            if len(blob) != 51 or not blob.startswith(sstr(b"ssh-ed25519") + struct.pack(">I", 32)):
+                raise ValueError(tr("Некорректный ответ телефона; настройки не изменены."))
+            current = self.d.get("recovery")
+            if current == rec:
+                print(green(tr("Резервный ключ ПК совпадает с телефоном. Изменения не нужны; права на серверах проверяются отдельно.")))
+                return
+            if current not in (None, ""):
+                print(yellow(tr("Резервные ключи ПК и телефона различаются. Автоматическая замена запрещена; настройки не изменены.")))
+                return
+            pw = getpass.getpass(blue(tr("Резервный пароль владельца (Enter — отмена): ")))
+            if not pw: return
+            matches = hmac.compare_digest(recovery_line(recovery_seed(pw)), rec)
+            del pw
+            if not matches:
+                print(red(tr("Пароль не соответствует резервному ключу телефона. Настройки не изменены.")))
+                return
+            if yes(tr("Восстановить на этом ПК существующий резервный доступ? Серверы и телефон не изменятся."), False):
+                self.d["recovery"] = rec
+                try: self.save()
+                except OSError:
+                    self.d["recovery"] = current
+                    raise
+                print(green(tr("Резервный доступ восстановлен только на этом ПК. Права на серверах и доступ других участников не изменены.")))
+        except (OSError, ConnectionError, ValueError, KeyError) as e:
+            print(red(f"✗ {e}"))
+        finally:
+            ch.close()
+            pause()
 
     def new_recovery(self):
         """Показать новый резервный пароль, проверить ввод; вернуть строку резервного ключа."""
@@ -2541,8 +2798,10 @@ class PC:
             sock = socket.create_connection(addr, timeout=10); sock.settimeout(300)
             nC = secrets.token_bytes(32)
             send_raw(sock, {"t": "pair", "pub": pubkey(self.me).hex(), "commit": H(b"commit", nC).hex(),
-                            "name": socket.gethostname()})
+                            "name": socket.gethostname(), "profile": PROFILE})
             r = recv_raw(sock)
+            if r.get("profile", "default") != PROFILE:
+                raise ValueError(tr("Профили не совпадают. Выберите один и тот же профиль на ПК и телефоне; основной профиль не изменён."))
             ppub, nP = bytes.fromhex(r["pub"]), bytes.fromhex(r["n"])
             send_raw(sock, {"n": nC.hex()})
             code = sas(pubkey(self.me), ppub, nC, nP)
@@ -2684,9 +2943,11 @@ class PC:
     def section_pairing(self):
         while True:
             header(tr("сопряжение"))
-            a = menu([tr("Сопряжение с телефоном"), tr("Установить / обновить приложение на телефоне"), tr("Назад")], default=1)
+            a = menu([tr("Сопряжение с телефоном"), tr("Установить / обновить приложение на телефоне"), tr("Проверить режим доступа"), tr("Профили"), tr("Назад")], default=1)
             if a == "1": self.pair()
             elif a == "2": install_phone()
+            elif a == "3": self.repair_access()
+            elif a == "4": profiles_menu()
             else: return
 
     ACTIONS = [  # (название, нужный ранг прав)
@@ -3158,7 +3419,11 @@ class PC:
     def new_vps(self, source=None):
         header(tr("Настроить VPS"))
         if not self.d.get("recovery"):
-            print(yellow(tr("Настройка VPS доступна владельцу резервного доступа. Сначала выполните сопряжение."))); pause(); return
+            if self.d.get("phone"):
+                print(yellow(tr("Телефон сопряжён, но на ПК нет резервного доступа. Откройте «Сопряжение» → «Проверить режим доступа».")))
+            else:
+                print(yellow(tr("Телефон не сопряжён: пункт «Сопряжение» → «Сопряжение с телефоном».")))
+            pause(); return
         saved = source is not None
         if source is None:
             source = edit_server(servers=self.d["servers"])
@@ -3478,6 +3743,9 @@ class PC:
                      tr("Затереть: оставить на серверах только ключи ssh-storage этого телефона"), tr("Назад")], default=1)
         if mode not in ("1", "2"): return
         wipe = mode == "2"
+        if wipe and shared_profiles():
+            print(yellow(tr("Режим «затереть» заблокирован при наличии личного профиля: он может удалить доступ другого профиля. Используйте режим «Добавить».")))
+            pause(); return
         sv = [x for x in self.d["servers"] if server_ok(x)]
         if not sv: print(yellow(tr("Список серверов пуст."))); pause(); return
         header(tr("перевыпуск ключей — сводка"))
@@ -3665,7 +3933,13 @@ def pc_wipe():
     print(dim(tr("Удалится закрытый ключ сопряжения; SSH-ключ остаётся на телефоне, резервный пароль — на бумаге.")))
     print(yellow(tr("Резервный пароль после этого здесь не будет известен: при новом сопряжении создастся новый.")))
     if not confirm_wipe(): return False
-    if os.path.exists(PC_STATE): os.remove(PC_STATE)
+    if PROFILE == "personal":
+        old = load_profile_state(PC_STATE)
+        state = {"profile": "personal", "profile_schema": 1, "me": secrets.token_hex(32),
+                 "phone": None, "recovery": None, "servers": []}
+        if "language" in old: state["language"] = old["language"]
+        save_json(PC_STATE, state)
+    elif os.path.exists(PC_STATE): os.remove(PC_STATE)
     if os.path.exists(LEGACY_VAULT) and yes(yellow(tr("Удалить и старый vault.json?"))): os.remove(LEGACY_VAULT)
     print(green(tr("✓ Стёрто."))); return True
 
@@ -3675,6 +3949,7 @@ def pc_main():
     pc = PC()
     while True:
         header(tr("главное меню"))
+        print(tr("Профиль: {p0}", p0=profile_label()))
         phone = green(tr("Телефон: ") + pc.d["phone"]["fp"]) if pc.d["phone"] else yellow(tr("Телефон не сопряжён"))
         rec = green(tr("Резервный ключ есть")) if pc.d["recovery"] else yellow(tr("Резервного ключа нет"))
         print(f"  {phone}   {rec}\n")

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026.11.02.1
+
+### Added
+- Separate Personal profile on computer and phone, reachable through Pairing → Profiles → Create / open personal profile. It starts with no servers and uses an independent pairing identity, Android Keystore key and recovery password; the existing profile is not migrated or promoted.
+- Explicit profile selection with `ssh-storage --profile personal`; a plain launch still selects the existing profile. Update/language restarts retain the selected profile, and phone approval screens identify it.
+
+### Safety
+- Pairing and discovery reject mismatched profiles. A personal phone requires a valid recovery public key during pairing. Existing phone pairings are retained in the existing profile.
+- Private profile state rejects unknown IDs, symlinked paths and malformed/missing state. Previously initialized personal keys are never silently regenerated; their public identity is checked. A per-personal-profile instance lock prevents concurrent use.
+- Profile reset preserves its SSH key and does not touch the other profile. Shared application removal is blocked while a personal profile exists. Key rotation stays within the selected profile's namespace.
+- Destructive wipe-rekey is blocked on both computer and phone while a personal profile exists, because two profiles may share a server account. Additive rotation remains available. Contradictory initialization metadata is rejected before accessing Keystore.
+- This release has automated isolation/crypto-channel tests, not real Android Keystore or disposable-VPS certification. Do not delete existing app data to set it up, and keep a separate recovery path.
+
+## 2026.11.02
+
+### Added
+- Pairing → Check access mode: recover a missing local public recovery key only when it already exists on the paired phone, the owner supplies the matching recovery password, and explicitly confirms the change.
+
+### Safety
+- The check sends only a read-only list request after phone session approval; it does not offer phone updates, re-pair devices, change server permissions, or generate or replace keys. The phone retains its usual session audit entry. The recovery password stays local and is not saved.
+- A phone without recovery access cannot be promoted automatically. A mistaken team-member setup on both devices still needs a separate personal-access setup; this tool deliberately does not reset it.
+
+### Fixed
+- VPS setup no longer tells an already-paired team member to pair again. It points to the access-mode check instead.
+
 ## 2026.11.01
 
 ### Added
